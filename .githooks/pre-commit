@@ -1,0 +1,4 @@
+#!/usr/bin/env sh
+# Enabled via `just hooks` (sets core.hooksPath). Skip once with `git commit --no-verify`.
+set -e
+exec just pre-commit
