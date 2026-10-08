@@ -10,7 +10,11 @@ A unified, local-first desktop app for comparing data: JSON, HTML, source code, 
 diffly diff old.txt new.txt               # line diff
 diffly diff old.txt new.txt --mode word   # word diff: [-removed-]{+added+}
 diffly diff old.txt new.txt --mode char   # character diff
+diffly diff old.json new.json             # structural JSON diff: $.user.tags[2]: added "admin"
+diffly diff a.txt b.txt --kind json       # force JSON (or --kind text to force a line diff)
 ```
+
+JSON is detected when both files end in `.json`; key order and formatting are ignored, arrays are compared by index.
 
 Exit codes follow `diff(1)`: `0` identical, `1` different, `2` error. Use `-v`/`-vv` or `RUST_LOG` for logging.
 

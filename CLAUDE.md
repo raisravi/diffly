@@ -10,11 +10,17 @@ The UI framework is **GPUI Kit** (https://gpui-kit.com/, crate `gpui-kit`). It i
 
 ## Workspace
 
-- `crates/diffly-core`: the diff engine. It uses `thiserror` (`DiffError`) and produces a front-end-neutral `DiffResult` (`Vec<Change>` + `DiffStats`). It **must not depend on gpui/gpui-kit, clap or anyhow**, so it stays testable without a window and reusable by any front-end.
+- `crates/diffly-core`: the diff engine. It uses `thiserror` (`DiffError`) and produces a front-end-neutral `DiffResult` (shared `DiffStats` + a per-kind `DiffBody`). It **must not depend on gpui/gpui-kit, clap or anyhow**, so it stays testable without a window and reusable by any front-end.
 - `crates/diffly`: the `diffly` binary. It uses `anyhow` with `.context(...)` at IO boundaries and parses args with clap derive (`src/cli.rs`). Clap-only types such as `ModeArg` mirror core types and convert with `From`, which keeps `ValueEnum` out of core. The GPUI Kit app will live here too; the `gui` subcommand is currently a placeholder.
 - `diffly diff` exit codes follow `diff(1)`: 0 identical, 1 different, 2 error.
 
-Front-ends only call `diffly_core::diff(left, right, &DiffOptions)`. It takes two in-memory strings, dispatches on `InputKind`, and returns `Result<DiffResult>`; loading files is a separate step. To add a new data type, add an `InputKind` variant and a match arm in that entry point. Don't add special cases in view or CLI code. Core behaviour is tested at that seam: `crates/diffly-core/tests/` drives the public API with strings.
+Front-ends only call `diffly_core::diff(left, right, &DiffOptions)`. It takes two in-memory strings, dispatches on `InputKind`, and returns `Result<DiffResult>`; loading files is a separate step. To add a new data type:
+- Add an `InputKind` variant (text granularity lives inside `InputKind::Text`).
+- Add its own module returning a new `DiffBody` variant.
+- Teach `InputKind::detect` its file extensions if it has any.
+- Render the new `DiffBody` variant in each front-end, and expose the kind in the CLI's `--kind` (`KindArg`).
+
+`DiffBody` is deliberately not `#[non_exhaustive]`, so every front-end fails to compile until it renders the new kind. Don't add special cases in view or CLI code. Core behaviour is tested at that seam: `crates/diffly-core/tests/` drives the public API with strings.
 
 ## Commands
 

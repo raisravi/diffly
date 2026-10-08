@@ -12,6 +12,7 @@ fn changes(result: &DiffResult) -> Vec<(TextChangeKind, &str)> {
             .iter()
             .map(|c| (c.kind, c.value.as_str()))
             .collect(),
+        DiffBody::Json(_) => panic!("expected a text diff"),
     }
 }
 

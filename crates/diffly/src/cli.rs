@@ -23,9 +23,13 @@ pub(crate) enum Command {
         left: PathBuf,
         /// Modified file.
         right: PathBuf,
-        /// Diff granularity.
-        #[arg(short, long, value_enum, default_value_t)]
-        mode: ModeArg,
+        /// How to compare the inputs. By default both files must end in `.json`
+        /// to be compared as JSON; anything else is compared as text.
+        #[arg(short, long, value_enum)]
+        kind: Option<KindArg>,
+        /// Text diff granularity [default: line]. Only valid for text diffs.
+        #[arg(short, long, value_enum)]
+        mode: Option<ModeArg>,
     },
     /// Open the desktop app (not implemented yet).
     Gui {
@@ -34,10 +38,16 @@ pub(crate) enum Command {
     },
 }
 
+/// How to compare the two inputs.
+#[derive(Debug, Clone, Copy, ValueEnum)]
+pub(crate) enum KindArg {
+    Text,
+    Json,
+}
+
 /// CLI mirror of [`DiffMode`] so the core crate stays free of clap.
-#[derive(Debug, Clone, Copy, Default, ValueEnum)]
+#[derive(Debug, Clone, Copy, ValueEnum)]
 pub(crate) enum ModeArg {
-    #[default]
     Line,
     Word,
     Char,

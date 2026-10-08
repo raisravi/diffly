@@ -24,7 +24,12 @@ fn main() -> ExitCode {
 
 fn run(cli: Cli) -> anyhow::Result<ExitCode> {
     match cli.command {
-        Some(Command::Diff { left, right, mode }) => commands::diff(&left, &right, mode.into()),
+        Some(Command::Diff {
+            left,
+            right,
+            kind,
+            mode,
+        }) => commands::diff(&left, &right, kind, mode.map(Into::into)),
         Some(Command::Gui { .. }) | None => {
             bail!("the desktop app is not implemented yet; try `diffly diff <LEFT> <RIGHT>`")
         }

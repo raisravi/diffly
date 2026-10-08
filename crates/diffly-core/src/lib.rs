@@ -5,13 +5,18 @@
 
 mod diff;
 mod error;
+mod json;
 mod mode;
 mod result;
+mod side;
 mod source;
 mod text;
 
 pub use diff::{DiffOptions, InputKind, diff};
 pub use error::{DiffError, Result};
+pub use json::{JsonChange, JsonChangeKind, JsonDiff, JsonPath, PathSegment};
 pub use mode::DiffMode;
-pub use result::{DiffBody, DiffResult, DiffStats, TextChange, TextChangeKind, TextDiff};
+pub use result::{DiffBody, DiffResult, DiffStats};
+pub use side::Side;
 pub use source::load_source;
+pub use text::{TextChange, TextChangeKind, TextDiff};
