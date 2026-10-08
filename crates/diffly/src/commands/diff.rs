@@ -3,17 +3,18 @@ use std::path::Path;
 use std::process::ExitCode;
 
 use anyhow::Context;
-use diffly_core::{ChangeKind, DiffMode, DiffResult, diff_text, load_source};
+use diffly_core::{ChangeKind, DiffMode, DiffOptions, DiffResult, diff, load_source};
 
 /// Exit codes follow `diff(1)`: 0 identical, 1 different, 2 error.
 pub(crate) fn run(left: &Path, right: &Path, mode: DiffMode) -> anyhow::Result<ExitCode> {
-    let old =
+    let left_text =
         load_source(left).with_context(|| format!("loading left input {}", left.display()))?;
-    let new =
+    let right_text =
         load_source(right).with_context(|| format!("loading right input {}", right.display()))?;
 
     tracing::debug!(%mode, left = %left.display(), right = %right.display(), "diffing");
-    let result = diff_text(&old, &new, mode);
+    let result =
+        diff(&left_text, &right_text, &DiffOptions::text(mode)).context("comparing inputs")?;
 
     let mut out = io::stdout().lock();
     render(&mut out, &result).context("writing diff output")?;

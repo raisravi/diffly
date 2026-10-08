@@ -14,7 +14,7 @@ The UI framework is **GPUI Kit** (https://gpui-kit.com/, crate `gpui-kit`). It i
 - `crates/diffly`: the `diffly` binary. It uses `anyhow` with `.context(...)` at IO boundaries and parses args with clap derive (`src/cli.rs`). Clap-only types such as `ModeArg` mirror core types and convert with `From`, which keeps `ValueEnum` out of core. The GPUI Kit app will live here too; the `gui` subcommand is currently a placeholder.
 - `diffly diff` exit codes follow `diff(1)`: 0 identical, 1 different, 2 error.
 
-To add a new data type or diff technique, plug it into the core layer through a shared abstraction, for example "input kind → parser → diff strategy → `DiffResult`". Don't add special cases in view or CLI code.
+Front-ends only call `diffly_core::diff(left, right, &DiffOptions)`. It takes two in-memory strings, dispatches on `InputKind`, and returns `Result<DiffResult>`; loading files is a separate step. To add a new data type, add an `InputKind` variant and a match arm in that entry point. Don't add special cases in view or CLI code. Core behaviour is tested at that seam: `crates/diffly-core/tests/` drives the public API with strings.
 
 ## Commands
 
