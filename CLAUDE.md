@@ -41,6 +41,9 @@ The pre-commit hook runs `just pre-commit` (fmt-check + lint).
 
 ## Lint policy
 
+The toolchain is pinned in `rust-toolchain.toml`, and CI installs it from that file (`rustup toolchain install`), so local and CI clippy match. A new Rust release can bring new lints: bump the pin deliberately and fix the fallout in the same commit.
+
+
 Lints are defined once in `[workspace.lints]` in the root `Cargo.toml`, and every crate opts in with `[lints] workspace = true`. Clippy `pedantic` is on, `unwrap_used` warns, and `unsafe_code` is forbidden. CI treats warnings as errors. `clippy.toml` allows unwrap/expect inside `#[test]` fns. Integration-test files add `#![allow(clippy::unwrap_used)]` because their helper fns aren't covered. Inside the binary crate, use `pub(crate)` rather than `pub`, because `unreachable_pub` is enabled.
 
 Add new dependencies to `[workspace.dependencies]` and reference them with `dep.workspace = true`. `deny.toml` controls the allowed licenses: update it if a new dependency (e.g. gpui-kit's tree) brings a license that isn't on the list.
