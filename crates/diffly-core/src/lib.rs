@@ -13,5 +13,5 @@ mod text;
 pub use diff::{DiffOptions, InputKind, diff};
 pub use error::{DiffError, Result};
 pub use mode::DiffMode;
-pub use result::{Change, ChangeKind, DiffResult, DiffStats};
+pub use result::{DiffBody, DiffResult, DiffStats, TextChange, TextChangeKind, TextDiff};
 pub use source::load_source;

@@ -1,22 +1,26 @@
 use crate::{DiffMode, DiffResult, Result, text};
 
 /// What kind of data the two inputs hold, which decides how they are compared.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum InputKind {
-    #[default]
-    Text,
+    /// Plain text at the given granularity.
+    Text(DiffMode),
+}
+
+impl Default for InputKind {
+    fn default() -> Self {
+        Self::Text(DiffMode::default())
+    }
 }
 
 /// How to compare two inputs.
 ///
-/// Build it with a constructor or [`Default`]; fields will be added as new input kinds land.
+/// Build it with a constructor or [`Default`]; fields will be added as new options land.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct DiffOptions {
     pub kind: InputKind,
-    /// Granularity for text comparison.
-    pub mode: DiffMode,
 }
 
 impl DiffOptions {
@@ -24,8 +28,7 @@ impl DiffOptions {
     #[must_use]
     pub fn text(mode: DiffMode) -> Self {
         Self {
-            kind: InputKind::Text,
-            mode,
+            kind: InputKind::Text(mode),
         }
     }
 }
@@ -35,6 +38,6 @@ impl DiffOptions {
 /// Fallible because structured kinds must parse their inputs first.
 pub fn diff(left: &str, right: &str, options: &DiffOptions) -> Result<DiffResult> {
     match options.kind {
-        InputKind::Text => Ok(text::diff_text(left, right, options.mode)),
+        InputKind::Text(mode) => Ok(text::diff_text(left, right, mode)),
     }
 }

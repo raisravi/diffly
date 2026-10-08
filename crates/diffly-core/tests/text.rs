@@ -1,14 +1,18 @@
-//! Behaviour of the public diff entry point, driven with in-memory inputs.
+//! Text diffs through the public entry point, driven with in-memory inputs.
 
-use diffly_core::{ChangeKind, DiffMode, DiffOptions, DiffResult, DiffStats, InputKind, diff};
+use diffly_core::{
+    DiffBody, DiffMode, DiffOptions, DiffResult, DiffStats, InputKind, TextChangeKind, diff,
+};
 use pretty_assertions::assert_eq;
 
-fn changes(result: &DiffResult) -> Vec<(ChangeKind, &str)> {
-    result
-        .changes
-        .iter()
-        .map(|c| (c.kind, c.value.as_str()))
-        .collect()
+fn changes(result: &DiffResult) -> Vec<(TextChangeKind, &str)> {
+    match &result.body {
+        DiffBody::Text(text) => text
+            .changes
+            .iter()
+            .map(|c| (c.kind, c.value.as_str()))
+            .collect(),
+    }
 }
 
 #[test]
@@ -18,16 +22,17 @@ fn line_diff_reports_changed_lines() {
     assert_eq!(
         changes(&result),
         vec![
-            (ChangeKind::Equal, "a\n"),
-            (ChangeKind::Delete, "b\n"),
-            (ChangeKind::Insert, "c\n"),
+            (TextChangeKind::Equal, "a\n"),
+            (TextChangeKind::Delete, "b\n"),
+            (TextChangeKind::Insert, "c\n"),
         ]
     );
     assert_eq!(
         result.stats,
         DiffStats {
             inserted: 1,
-            deleted: 1
+            deleted: 1,
+            changed: 0,
         }
     );
 }
@@ -44,17 +49,18 @@ fn word_diff_reports_changed_words() {
     assert_eq!(
         changes(&result),
         vec![
-            (ChangeKind::Equal, "hello"),
-            (ChangeKind::Equal, " "),
-            (ChangeKind::Delete, "world"),
-            (ChangeKind::Insert, "there"),
+            (TextChangeKind::Equal, "hello"),
+            (TextChangeKind::Equal, " "),
+            (TextChangeKind::Delete, "world"),
+            (TextChangeKind::Insert, "there"),
         ]
     );
     assert_eq!(
         result.stats,
         DiffStats {
             inserted: 1,
-            deleted: 1
+            deleted: 1,
+            changed: 0,
         }
     );
 }
@@ -66,10 +72,10 @@ fn char_diff_reports_changed_chars() {
     assert_eq!(
         changes(&result),
         vec![
-            (ChangeKind::Equal, "c"),
-            (ChangeKind::Delete, "a"),
-            (ChangeKind::Insert, "u"),
-            (ChangeKind::Equal, "t"),
+            (TextChangeKind::Equal, "c"),
+            (TextChangeKind::Delete, "a"),
+            (TextChangeKind::Insert, "u"),
+            (TextChangeKind::Equal, "t"),
         ]
     );
 }
@@ -87,13 +93,12 @@ fn empty_inputs_produce_no_changes() {
     let result = diff("", "", &DiffOptions::text(DiffMode::Char)).unwrap();
 
     assert!(result.is_identical());
-    assert!(result.changes.is_empty());
+    assert!(changes(&result).is_empty());
 }
 
 #[test]
 fn default_options_are_a_line_diff_of_text() {
     let options = DiffOptions::default();
 
-    assert_eq!(options.kind, InputKind::Text);
-    assert_eq!(options.mode, DiffMode::Line);
+    assert_eq!(options.kind, InputKind::Text(DiffMode::Line));
 }

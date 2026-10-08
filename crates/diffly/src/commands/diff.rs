@@ -3,7 +3,10 @@ use std::path::Path;
 use std::process::ExitCode;
 
 use anyhow::Context;
-use diffly_core::{ChangeKind, DiffMode, DiffOptions, DiffResult, diff, load_source};
+use diffly_core::{
+    DiffBody, DiffMode, DiffOptions, DiffResult, DiffStats, TextChangeKind, TextDiff, diff,
+    load_source,
+};
 
 /// Exit codes follow `diff(1)`: 0 identical, 1 different, 2 error.
 pub(crate) fn run(left: &Path, right: &Path, mode: DiffMode) -> anyhow::Result<ExitCode> {
@@ -27,12 +30,18 @@ pub(crate) fn run(left: &Path, right: &Path, mode: DiffMode) -> anyhow::Result<E
 }
 
 fn render(out: &mut impl Write, result: &DiffResult) -> io::Result<()> {
-    if result.mode == DiffMode::Line {
-        for change in &result.changes {
+    match &result.body {
+        DiffBody::Text(text) => render_text(out, text, result.stats),
+    }
+}
+
+fn render_text(out: &mut impl Write, text: &TextDiff, stats: DiffStats) -> io::Result<()> {
+    if text.mode == DiffMode::Line {
+        for change in &text.changes {
             let sign = match change.kind {
-                ChangeKind::Equal => ' ',
-                ChangeKind::Insert => '+',
-                ChangeKind::Delete => '-',
+                TextChangeKind::Equal => ' ',
+                TextChangeKind::Insert => '+',
+                TextChangeKind::Delete => '-',
             };
             write!(out, "{sign}{}", change.value)?;
             if !change.value.ends_with('\n') {
@@ -41,24 +50,20 @@ fn render(out: &mut impl Write, result: &DiffResult) -> io::Result<()> {
         }
     } else {
         // Inline markers for sub-line granularity: [-deleted-]{+inserted+}
-        for change in &result.changes {
+        for change in &text.changes {
             match change.kind {
-                ChangeKind::Equal => write!(out, "{}", change.value)?,
-                ChangeKind::Insert => write!(out, "{{+{}+}}", change.value)?,
-                ChangeKind::Delete => write!(out, "[-{}-]", change.value)?,
+                TextChangeKind::Equal => write!(out, "{}", change.value)?,
+                TextChangeKind::Insert => write!(out, "{{+{}+}}", change.value)?,
+                TextChangeKind::Delete => write!(out, "[-{}-]", change.value)?,
             }
         }
-        if !result
-            .changes
-            .last()
-            .is_some_and(|c| c.value.ends_with('\n'))
-        {
+        if !text.changes.last().is_some_and(|c| c.value.ends_with('\n')) {
             writeln!(out)?;
         }
     }
     writeln!(
         out,
         "{} insertion(s), {} deletion(s) ({} mode)",
-        result.stats.inserted, result.stats.deleted, result.mode
+        stats.inserted, stats.deleted, text.mode
     )
 }
