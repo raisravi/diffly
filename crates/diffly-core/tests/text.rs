@@ -94,7 +94,7 @@ fn empty_inputs_produce_no_changes() {
     let result = diff("", "", &DiffOptions::text(DiffMode::Char)).unwrap();
 
     assert!(result.is_identical());
-    assert!(changes(&result).is_empty());
+    assert_eq!(changes(&result), Vec::<(TextChangeKind, &str)>::new());
 }
 
 #[test]

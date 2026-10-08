@@ -127,7 +127,7 @@ fn reordered_and_reformatted_documents_are_identical() {
         "{\n  \"b\": {\n    \"y\": null,\n    \"x\": [ 1, 2 ]\n  },\n  \"a\": 1\n}\n",
     );
 
-    assert!(rows(&result).is_empty());
+    assert_eq!(rows(&result), Vec::<Row>::new());
     assert!(result.is_identical());
 }
 
@@ -202,7 +202,7 @@ fn keys_that_are_not_identifiers_are_quoted_in_paths() {
 fn numbers_compare_by_value_not_spelling() {
     let result = json_diff("[1, 1e2, -0, 2.50]", "[1.0, 100, 0, 2.5]");
 
-    assert!(rows(&result).is_empty());
+    assert_eq!(rows(&result), Vec::<Row>::new());
 }
 
 #[test]
