@@ -13,6 +13,8 @@ repository = "https://github.com/raisravi/diffly"
 [workspace.dependencies]
 diffly-core = { path = "crates/diffly-core", version = "0.1.0" }
 
+anstream = "1"
+anstyle = "1"
 anyhow = "1"
 clap = { version = "4.5", features = ["derive", "env", "wrap_help"] }
 serde_json = { version = "1", features = ["arbitrary_precision", "preserve_order"] }

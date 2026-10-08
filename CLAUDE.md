@@ -12,6 +12,7 @@ The UI framework is **GPUI Kit** (https://gpui-kit.com/, crate `gpui-kit`). It i
 
 - `crates/diffly-core`: the diff engine. It uses `thiserror` (`DiffError`) and produces a front-end-neutral `DiffResult` (shared `DiffStats` + a per-kind `DiffBody`). It **must not depend on gpui/gpui-kit, clap or anyhow**, so it stays testable without a window and reusable by any front-end.
 - `crates/diffly`: the `diffly` binary. It uses `anyhow` with `.context(...)` at IO boundaries and parses args with clap derive (`src/cli.rs`). Clap-only types such as `ModeArg` mirror core types and convert with `From`, which keeps `ValueEnum` out of core. The GPUI Kit app will live here too; the `gui` subcommand is currently a placeholder.
+- CLI color: renderers always write `anstyle` styles through the `paint` helper (in `commands/diff.rs`), which closes the style before each line ending. Stdout is wrapped in `anstream::AutoStream`, which strips the styles for `--color never` and for `auto` off a terminal, so uncolored output can't drift from colored output.
 - `diffly diff` exit codes follow `diff(1)`: 0 identical, 1 different, 2 error.
 
 Front-ends only call `diffly_core::diff(left, right, &DiffOptions)`. It takes two in-memory strings, dispatches on `InputKind`, and returns `Result<DiffResult>`; loading files is a separate step. To add a new data type:

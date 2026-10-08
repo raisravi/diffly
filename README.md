@@ -16,7 +16,7 @@ diffly diff a.txt b.txt --kind json       # force JSON (or --kind text to force 
 
 JSON is detected when both files end in `.json`; key order and formatting are ignored, arrays are compared by index.
 
-Exit codes follow `diff(1)`: `0` identical, `1` different, `2` error. Use `-v`/`-vv` or `RUST_LOG` for logging.
+Exit codes follow `diff(1)`: `0` identical, `1` different, `2` error. Output is colored on a terminal; `--color auto|always|never` overrides that, and `NO_COLOR` is honoured. Use `-v`/`-vv` or `RUST_LOG` for logging.
 
 ## Development
 

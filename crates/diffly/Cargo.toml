@@ -9,6 +9,8 @@ authors.workspace = true
 repository.workspace = true
 
 [dependencies]
+anstream.workspace = true
+anstyle.workspace = true
 anyhow.workspace = true
 clap.workspace = true
 diffly-core.workspace = true

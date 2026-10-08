@@ -11,6 +11,10 @@ pub(crate) struct Cli {
     #[arg(short, long, action = ArgAction::Count, global = true)]
     pub(crate) verbose: u8,
 
+    /// When to color output. `auto` colors only on a terminal and honours `NO_COLOR`.
+    #[arg(long, value_enum, default_value_t = ColorArg::Auto, global = true)]
+    pub(crate) color: ColorArg,
+
     #[command(subcommand)]
     pub(crate) command: Option<Command>,
 }
@@ -36,6 +40,24 @@ pub(crate) enum Command {
         left: Option<PathBuf>,
         right: Option<PathBuf>,
     },
+}
+
+/// When to emit ANSI colors.
+#[derive(Debug, Clone, Copy, ValueEnum)]
+pub(crate) enum ColorArg {
+    Auto,
+    Always,
+    Never,
+}
+
+impl From<ColorArg> for anstream::ColorChoice {
+    fn from(color: ColorArg) -> Self {
+        match color {
+            ColorArg::Auto => Self::Auto,
+            ColorArg::Always => Self::Always,
+            ColorArg::Never => Self::Never,
+        }
+    }
 }
 
 /// How to compare the two inputs.

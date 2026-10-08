@@ -6,8 +6,13 @@ use assert_cmd::Command;
 use predicates::prelude::*;
 use tempfile::TempDir;
 
+/// The binary with color-related environment cleared, so output doesn't depend on the caller's shell.
 fn diffly() -> Command {
-    Command::cargo_bin("diffly").unwrap()
+    let mut cmd = Command::cargo_bin("diffly").unwrap();
+    for var in ["NO_COLOR", "CLICOLOR", "CLICOLOR_FORCE"] {
+        cmd.env_remove(var);
+    }
+    cmd
 }
 
 fn write_pair(left: &str, right: &str) -> TempDir {
@@ -168,4 +173,159 @@ fn mode_is_rejected_for_json_diffs() {
         .stderr(predicate::str::contains(
             "--mode only applies to text diffs",
         ));
+}
+
+const RED: &str = "\x1b[31m";
+const GREEN: &str = "\x1b[32m";
+const RESET: &str = "\x1b[0m";
+
+#[test]
+fn color_always_colors_line_diff() {
+    let dir = write_pair("a\nb\n", "a\nc\n");
+    diffly()
+        .current_dir(dir.path())
+        .args(["diff", "left.txt", "right.txt", "--color", "always"])
+        .assert()
+        .code(1)
+        .stdout(format!(
+            " a\n{RED}-b{RESET}\n{GREEN}+c{RESET}\n1 insertion(s), 1 deletion(s) (line mode)\n"
+        ));
+}
+
+/// Stdout of a small line diff, with an optional `--color` value and extra environment.
+fn diff_stdout(color: Option<&str>, env: &[(&str, &str)]) -> String {
+    let dir = write_pair("a\nb\n", "a\nc\n");
+    let mut cmd = diffly();
+    cmd.current_dir(dir.path())
+        .envs(env.iter().copied())
+        .args(["diff", "left.txt", "right.txt"]);
+    if let Some(color) = color {
+        cmd.args(["--color", color]);
+    }
+    String::from_utf8(cmd.output().unwrap().stdout).unwrap()
+}
+
+#[test]
+fn color_never_emits_no_escape_codes_even_when_forced() {
+    assert!(!diff_stdout(Some("never"), &[("CLICOLOR_FORCE", "1")]).contains('\x1b'));
+}
+
+#[test]
+fn color_auto_is_plain_when_stdout_is_not_a_terminal() {
+    assert!(!diff_stdout(Some("auto"), &[]).contains('\x1b'));
+}
+
+#[test]
+fn color_auto_honours_clicolor_force_and_no_color() {
+    assert!(diff_stdout(Some("auto"), &[("CLICOLOR_FORCE", "1")]).contains(GREEN));
+    assert!(
+        !diff_stdout(Some("auto"), &[("CLICOLOR_FORCE", "1"), ("NO_COLOR", "1")]).contains('\x1b')
+    );
+}
+
+#[test]
+fn color_defaults_to_auto() {
+    assert!(diff_stdout(None, &[("CLICOLOR_FORCE", "1")]).contains(GREEN));
+}
+
+#[test]
+fn color_always_colors_word_markers() {
+    let dir = write_pair("hello world\n", "hello there\n");
+    diffly()
+        .current_dir(dir.path())
+        .args([
+            "diff",
+            "left.txt",
+            "right.txt",
+            "--mode",
+            "word",
+            "--color",
+            "always",
+        ])
+        .assert()
+        .code(1)
+        .stdout(predicate::str::contains(format!(
+            "hello {RED}[-world-]{RESET}{GREEN}{{+there+}}{RESET}\n"
+        )));
+}
+
+#[test]
+fn color_always_colors_char_markers() {
+    let dir = write_pair("cat\n", "cut\n");
+    diffly()
+        .current_dir(dir.path())
+        .args([
+            "diff",
+            "left.txt",
+            "right.txt",
+            "--mode",
+            "char",
+            "--color",
+            "always",
+        ])
+        .assert()
+        .code(1)
+        .stdout(predicate::str::contains(format!(
+            "c{RED}[-a-]{RESET}{GREEN}{{+u+}}{RESET}t"
+        )));
+}
+
+#[test]
+fn color_always_colors_json_changes() {
+    let dir = write_files(&[
+        ("a.json", r#"{"age": 30, "email": "a@x"}"#),
+        ("b.json", r#"{"age": 31, "tags": ["admin"]}"#),
+    ]);
+    diffly()
+        .current_dir(dir.path())
+        .args(["diff", "a.json", "b.json", "--color", "always"])
+        .assert()
+        .code(1)
+        .stdout(format!(
+            "$.age: {RED}30{RESET} \u{2192} {GREEN}31{RESET}\n\
+             {RED}$.email: removed \"a@x\"{RESET}\n\
+             {GREEN}$.tags: added [\"admin\"]{RESET}\n\
+             1 added, 1 removed, 1 changed (json)\n"
+        ));
+}
+
+#[test]
+fn colored_spans_never_cross_a_line_break() {
+    let dir = write_pair("foo bar\nbaz\n", "foo qux\nnew line\nbaz\n");
+    let output = diffly()
+        .current_dir(dir.path())
+        .args([
+            "diff",
+            "left.txt",
+            "right.txt",
+            "--mode",
+            "word",
+            "--color",
+            "always",
+        ])
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8(output.stdout).unwrap();
+
+    for line in stdout.lines() {
+        let opened = line.matches(RED).count() + line.matches(GREEN).count();
+        assert_eq!(
+            opened,
+            line.matches(RESET).count(),
+            "unbalanced line: {line:?}"
+        );
+    }
+}
+
+#[test]
+fn carriage_returns_stay_outside_colored_spans() {
+    let dir = write_pair("a\r\nb\r\n", "a\r\nc\r\n");
+    diffly()
+        .current_dir(dir.path())
+        .args(["diff", "left.txt", "right.txt", "--color", "always"])
+        .assert()
+        .code(1)
+        .stdout(predicate::str::contains(format!(
+            "{RED}-b{RESET}\r\n{GREEN}+c{RESET}\r\n"
+        )));
 }
