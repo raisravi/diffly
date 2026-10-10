@@ -1,7 +1,7 @@
 mod view;
 
 use std::cell::RefCell;
-use std::path::Path;
+use std::path::PathBuf;
 use std::rc::Rc;
 
 use anyhow::Context as _;
@@ -9,9 +9,8 @@ use gpui_kit::{AppContext as _, TitlebarOptions, WindowOptions};
 
 use self::view::DiffView;
 
-/// Opens the side-by-side window and blocks until it is closed.
-pub(crate) fn run(left: &Path, right: &Path) -> anyhow::Result<()> {
-    let (left, right) = (left.to_owned(), right.to_owned());
+/// Opens the comparison window, pre-filled with any paths given, and blocks until it closes.
+pub(crate) fn run(left: Option<PathBuf>, right: Option<PathBuf>) -> anyhow::Result<()> {
     // `run` needs a 'static closure, so a failure to open travels back through a cell.
     let open_error = Rc::new(RefCell::new(None));
     let open_error_slot = Rc::clone(&open_error);
@@ -28,21 +27,13 @@ pub(crate) fn run(left: &Path, right: &Path) -> anyhow::Result<()> {
 
         let options = WindowOptions {
             titlebar: Some(TitlebarOptions {
-                title: Some(
-                    format!(
-                        "diffly \u{2014} {} \u{2194} {}",
-                        left.display(),
-                        right.display()
-                    )
-                    .into(),
-                ),
+                title: Some("diffly".into()),
                 ..Default::default()
             }),
             ..Default::default()
         };
-        let opened = gpui_kit::open_window(options, cx, |_, cx| {
-            cx.new(|_| DiffView::load(&left, &right))
-        });
+        let opened =
+            gpui_kit::open_window(options, cx, |_, cx| cx.new(|_| DiffView::new(left, right)));
         if let Err(err) = opened {
             *open_error_slot.borrow_mut() = Some(err);
             cx.quit();

@@ -2,12 +2,13 @@
 
 A unified, local-first desktop app for comparing data: JSON, HTML, source code, plain files and more, with multiple diff techniques per data type. The desktop UI is built with [GPUI Kit](https://gpui-kit.com/).
 
-> **Status:** early development. The diff engine and a terminal CLI work today; the desktop app shows a side-by-side line diff of two files.
+> **Status:** early development. The diff engine and a terminal CLI work today; the desktop app compares two files side by side.
 
 ## Usage
 
 ```sh
-diffly gui old.txt new.txt                # desktop window: side-by-side line diff
+diffly                                    # desktop window: pick or drop the two files
+diffly gui old.txt new.txt                # desktop window pre-filled with both files
 diffly diff old.txt new.txt               # line diff
 diffly diff old.txt new.txt --mode word   # word diff: [-removed-]{+added+}
 diffly diff old.txt new.txt --mode char   # character diff
@@ -17,7 +18,7 @@ diffly diff a.txt b.txt --kind json       # force JSON (or --kind text to force 
 
 JSON is detected when both files end in `.json`; key order and formatting are ignored, arrays are compared by index.
 
-`diffly gui` always compares as lines for now (choosing the kind and mode in the app is planned). If a file can't be read, the window shows the error instead of the diff.
+In the desktop app, choose each side with **Choose…** or by dropping a file onto it. The toolbar picks the kind (Auto/Text/JSON) and, for text, the granularity (Line/Word/Char), and the diff re-runs on every change. Rows are always whole lines; in Word and Char mode the changed words or characters inside a changed line are highlighted. JSON is shown as a list of changes by path for now. If a file can't be read, the window shows the error instead of the diff.
 
 Exit codes follow `diff(1)`: `0` identical, `1` different, `2` error. Output is colored on a terminal; `--color auto|always|never` overrides that, and `NO_COLOR` is honoured. Use `-v`/`-vv` or `RUST_LOG` for logging.
 

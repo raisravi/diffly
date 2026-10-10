@@ -11,16 +11,16 @@ The UI framework is **GPUI Kit** (https://gpui-kit.com/, crate `gpui-kit`). It i
 ## Workspace
 
 - `crates/diffly-core`: the diff engine. It uses `thiserror` (`DiffError`) and produces a front-end-neutral `DiffResult` (shared `DiffStats` + a per-kind `DiffBody`). It **must not depend on gpui/gpui-kit, clap or anyhow**, so it stays testable without a window and reusable by any front-end.
-- `crates/diffly`: the `diffly` binary. It uses `anyhow` with `.context(...)` at IO boundaries and parses args with clap derive (`src/cli.rs`). Clap-only types such as `ModeArg` mirror core types and convert with `From`, which keeps `ValueEnum` out of core. The GPUI Kit app lives in `src/gui/`: `diffly gui LEFT RIGHT` opens a `DiffView` that renders `TextDiff::side_by_side()` rows (a core function, so alignment is tested without a window) in a virtualized `uniform_list`. Load and diff errors become an on-screen error panel, never a panic.
+- `crates/diffly`: the `diffly` binary. It uses `anyhow` with `.context(...)` at IO boundaries and parses args with clap derive (`src/cli.rs`). Clap-only types such as `ModeArg` mirror core types and convert with `From`, which keeps `ValueEnum` out of core. The GPUI Kit app lives in `src/gui/`: `diffly` or `diffly gui [LEFT] [RIGHT]` opens a `DiffView` that owns the two sources plus the toolbar's kind and mode, and re-runs `diff` (`refresh`) whenever one changes. Text renders `TextDiff::side_by_side()` rows (a core function, so alignment and word/char highlighting are tested without a window) in a virtualized `uniform_list`. Load and diff errors become an on-screen error panel, never a panic.
 - CLI color: renderers always write `anstyle` styles through the `paint` helper (in `commands/diff.rs`), which closes the style before each line ending. Stdout is wrapped in `anstream::AutoStream`, which strips the styles for `--color never` and for `auto` off a terminal, so uncolored output can't drift from colored output.
-- GUI tests are headless `#[gpui_kit::test]` unit tests inside the binary (`src/gui/view.rs`), via gpui-kit's `test-support` dev feature. Give each element worth asserting `.id(...).test_support().aria_label(...)` and query it with `window.find(id).label()`; this needs no display, so it runs on all CI OSes. Pixels aren't checked: look at the real window for visual changes.
+- GUI tests are headless `#[gpui_kit::test]` unit tests inside the binary (`src/gui/view.rs`), via gpui-kit's `test-support` dev feature. Give each element worth asserting `.id(...).test_support().aria_label(...)` and query it with `window.find(id).label()`. GPUI Kit components (`Button`, `Toggle`) are found by their own id and report `checked`, but not `disabled`, so assert a disabled control by clicking it. Simulate the file picker with `cx.simulate_path_prompt_response` and drops with `window.dispatch_event(PlatformInput::FileDrop(..))`. This needs no display, so it runs on all CI OSes. Pixels aren't checked: look at the real window for visual changes.
 - `diffly diff` exit codes follow `diff(1)`: 0 identical, 1 different, 2 error.
 
 Front-ends only call `diffly_core::diff(left, right, &DiffOptions)`. It takes two in-memory strings, dispatches on `InputKind`, and returns `Result<DiffResult>`; loading files is a separate step. To add a new data type:
 - Add an `InputKind` variant (text granularity lives inside `InputKind::Text`).
 - Add its own module returning a new `DiffBody` variant.
 - Teach `InputKind::detect` its file extensions if it has any.
-- Render the new `DiffBody` variant in each front-end, and expose the kind in the CLI's `--kind` (`KindArg`).
+- Render the new `DiffBody` variant in each front-end, and expose the kind in the CLI's `--kind` (`KindArg`) and in the app's toolbar (`KindChoice`, its `kinds` options and `DiffView::input_kind`, in `src/gui/view.rs`).
 
 `DiffBody` is deliberately not `#[non_exhaustive]`, so every front-end fails to compile until it renders the new kind. Don't add special cases in view or CLI code. Core behaviour is tested at that seam: `crates/diffly-core/tests/` drives the public API with strings.
 
@@ -30,7 +30,7 @@ The `justfile` is the entry point (`just` lists recipes). One-time setup: `just 
 
 ```sh
 just run diff a.txt b.txt --mode word   # run the CLI
-just run gui a.txt b.txt                # open the desktop window
+just run gui a.txt b.txt                # open the desktop window (paths optional)
 just watch [job]        # bacon; jobs: clippy (default), check, test, doc, run
 just test               # nextest (falls back to cargo test) + doctests
 just test-one <name>    # or: cargo test -p diffly-core <name>

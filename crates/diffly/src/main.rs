@@ -4,7 +4,6 @@ mod gui;
 
 use std::process::ExitCode;
 
-use anyhow::bail;
 use clap::Parser;
 use tracing_subscriber::EnvFilter;
 
@@ -32,11 +31,12 @@ fn run(cli: Cli) -> anyhow::Result<ExitCode> {
             mode,
         }) => commands::diff(&left, &right, kind, mode.map(Into::into), cli.color.into()),
         Some(Command::Gui { left, right }) => {
-            gui::run(&left, &right)?;
+            gui::run(left, right)?;
             Ok(ExitCode::SUCCESS)
         }
         None => {
-            bail!("pass two files: `diffly gui <LEFT> <RIGHT>` or `diffly diff <LEFT> <RIGHT>`")
+            gui::run(None, None)?;
+            Ok(ExitCode::SUCCESS)
         }
     }
 }
