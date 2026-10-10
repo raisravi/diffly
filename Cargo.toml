@@ -19,7 +19,7 @@ anyhow = "1"
 clap = { version = "4.5", features = ["derive", "env", "wrap_help"] }
 gpui-kit = "0.7.1"
 serde_json = { version = "1", features = ["arbitrary_precision", "preserve_order"] }
-similar = "2"
+similar = "3"
 thiserror = "2"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
