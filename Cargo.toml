@@ -5,7 +5,7 @@ resolver = "3"
 [workspace.package]
 version = "0.1.0"
 edition = "2024"
-rust-version = "1.85"
+rust-version = "1.88"
 license = "MIT OR Apache-2.0"
 authors = ["raisravi <ravics1718@gmail.com>"]
 repository = "https://github.com/raisravi/diffly"
@@ -17,6 +17,7 @@ anstream = "1"
 anstyle = "1"
 anyhow = "1"
 clap = { version = "4.5", features = ["derive", "env", "wrap_help"] }
+gpui-kit = "0.7.1"
 serde_json = { version = "1", features = ["arbitrary_precision", "preserve_order"] }
 similar = "2"
 thiserror = "2"

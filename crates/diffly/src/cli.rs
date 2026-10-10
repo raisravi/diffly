@@ -35,11 +35,8 @@ pub(crate) enum Command {
         #[arg(short, long, value_enum)]
         mode: Option<ModeArg>,
     },
-    /// Open the desktop app (not implemented yet).
-    Gui {
-        left: Option<PathBuf>,
-        right: Option<PathBuf>,
-    },
+    /// Show two files side by side in the desktop app (always a line diff for now).
+    Gui { left: PathBuf, right: PathBuf },
 }
 
 /// When to emit ANSI colors.

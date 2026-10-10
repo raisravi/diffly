@@ -11,8 +11,9 @@ The UI framework is **GPUI Kit** (https://gpui-kit.com/, crate `gpui-kit`). It i
 ## Workspace
 
 - `crates/diffly-core`: the diff engine. It uses `thiserror` (`DiffError`) and produces a front-end-neutral `DiffResult` (shared `DiffStats` + a per-kind `DiffBody`). It **must not depend on gpui/gpui-kit, clap or anyhow**, so it stays testable without a window and reusable by any front-end.
-- `crates/diffly`: the `diffly` binary. It uses `anyhow` with `.context(...)` at IO boundaries and parses args with clap derive (`src/cli.rs`). Clap-only types such as `ModeArg` mirror core types and convert with `From`, which keeps `ValueEnum` out of core. The GPUI Kit app will live here too; the `gui` subcommand is currently a placeholder.
+- `crates/diffly`: the `diffly` binary. It uses `anyhow` with `.context(...)` at IO boundaries and parses args with clap derive (`src/cli.rs`). Clap-only types such as `ModeArg` mirror core types and convert with `From`, which keeps `ValueEnum` out of core. The GPUI Kit app lives in `src/gui/`: `diffly gui LEFT RIGHT` opens a `DiffView` that renders `TextDiff::side_by_side()` rows (a core function, so alignment is tested without a window) in a virtualized `uniform_list`. Load and diff errors become an on-screen error panel, never a panic.
 - CLI color: renderers always write `anstyle` styles through the `paint` helper (in `commands/diff.rs`), which closes the style before each line ending. Stdout is wrapped in `anstream::AutoStream`, which strips the styles for `--color never` and for `auto` off a terminal, so uncolored output can't drift from colored output.
+- GUI tests are headless `#[gpui_kit::test]` unit tests inside the binary (`src/gui/view.rs`), via gpui-kit's `test-support` dev feature. Give each element worth asserting `.id(...).test_support().aria_label(...)` and query it with `window.find(id).label()`; this needs no display, so it runs on all CI OSes. Pixels aren't checked: look at the real window for visual changes.
 - `diffly diff` exit codes follow `diff(1)`: 0 identical, 1 different, 2 error.
 
 Front-ends only call `diffly_core::diff(left, right, &DiffOptions)`. It takes two in-memory strings, dispatches on `InputKind`, and returns `Result<DiffResult>`; loading files is a separate step. To add a new data type:
@@ -29,6 +30,7 @@ The `justfile` is the entry point (`just` lists recipes). One-time setup: `just 
 
 ```sh
 just run diff a.txt b.txt --mode word   # run the CLI
+just run gui a.txt b.txt                # open the desktop window
 just watch [job]        # bacon; jobs: clippy (default), check, test, doc, run
 just test               # nextest (falls back to cargo test) + doctests
 just test-one <name>    # or: cargo test -p diffly-core <name>
@@ -46,4 +48,4 @@ The toolchain is pinned in `rust-toolchain.toml`, and CI installs it from that f
 
 Lints are defined once in `[workspace.lints]` in the root `Cargo.toml`, and every crate opts in with `[lints] workspace = true`. Clippy `pedantic` is on, `unwrap_used` warns, and `unsafe_code` is forbidden. CI treats warnings as errors. `clippy.toml` allows unwrap/expect inside `#[test]` fns. Integration-test files add `#![allow(clippy::unwrap_used)]` because their helper fns aren't covered. Inside the binary crate, use `pub(crate)` rather than `pub`, because `unreachable_pub` is enabled.
 
-Add new dependencies to `[workspace.dependencies]` and reference them with `dep.workspace = true`. `deny.toml` controls the allowed licenses: update it if a new dependency (e.g. gpui-kit's tree) brings a license that isn't on the list.
+Add new dependencies to `[workspace.dependencies]` and reference them with `dep.workspace = true`. `deny.toml` controls the allowed licenses: update it if a new dependency brings a license that isn't on the list. Advisories only fail for unmaintained crates we depend on directly (`unmaintained = "workspace"`), because gpui-kit's tree has several; any ignored vulnerability needs a reason and a removal condition. gpui-kit sets the MSRV (`rust-version` 1.88). On Linux, building needs the system headers listed in `GPUI_LINUX_DEPS` in `.github/workflows/ci.yml`.

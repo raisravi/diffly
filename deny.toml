@@ -5,6 +5,17 @@ all-features = true
 [advisories]
 version = 2
 yanked = "deny"
+# Only fail on unmaintained crates we depend on directly. gpui-kit pulls in
+# several (instant, paste, rustls-pemfile, rustybuzz, ttf-parser) with no
+# maintained replacement we can choose.
+unmaintained = "workspace"
+ignore = [
+  # quick-xml 0.38 via zbus_xml (Linux accessibility over D-Bus). It only parses
+  # D-Bus introspection XML from the local session bus, never diffly's inputs.
+  # Drop these once zbus_xml moves to quick-xml >= 0.41.
+  { id = "RUSTSEC-2026-0194", reason = "quick-xml via zbus_xml; not fed untrusted XML" },
+  { id = "RUSTSEC-2026-0195", reason = "quick-xml via zbus_xml; not fed untrusted XML" },
+]
 
 [licenses]
 version = 2
@@ -19,6 +30,10 @@ allow = [
   "Zlib",
   "Unicode-3.0",
   "MPL-2.0",
+  # Brought in by gpui-kit's tree (wgpu, notify, libbz2-rs-sys); all permissive.
+  "0BSD",
+  "CC0-1.0",
+  "bzip2-1.0.6",
 ]
 
 [bans]

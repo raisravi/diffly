@@ -12,6 +12,9 @@ concurrency:
 env:
   CARGO_TERM_COLOR: always
   RUSTFLAGS: -D warnings
+  GPUI_LINUX_DEPS: >-
+    libfontconfig-dev libfreetype-dev libwayland-dev libx11-xcb-dev
+    libxcb1-dev libxkbcommon-dev libxkbcommon-x11-dev
 
 jobs:
   fmt:
@@ -31,6 +34,10 @@ jobs:
       - uses: actions/checkout@v4
       - run: rustup toolchain install # version and components come from rust-toolchain.toml
       - uses: Swatinem/rust-cache@v2
+      # Headers GPUI links against on Linux (X11/Wayland input, fonts).
+      - name: Install GPUI system libraries
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ${{ env.GPUI_LINUX_DEPS }}
       - run: cargo clippy --workspace --all-targets --all-features -- -D warnings
 
   test:
@@ -43,6 +50,10 @@ jobs:
       - uses: actions/checkout@v4
       - run: rustup toolchain install # version and components come from rust-toolchain.toml
       - uses: Swatinem/rust-cache@v2
+      # Headers GPUI links against on Linux (X11/Wayland input, fonts).
+      - name: Install GPUI system libraries
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ${{ env.GPUI_LINUX_DEPS }}
       - uses: taiki-e/install-action@v2
         with:
           tool: cargo-nextest

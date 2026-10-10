@@ -19,4 +19,4 @@ pub use mode::DiffMode;
 pub use result::{DiffBody, DiffResult, DiffStats};
 pub use side::Side;
 pub use source::load_source;
-pub use text::{TextChange, TextChangeKind, TextDiff};
+pub use text::{SideBySideRow, SideLine, TextChange, TextChangeKind, TextDiff};

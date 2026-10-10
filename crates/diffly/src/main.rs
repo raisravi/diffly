@@ -1,5 +1,6 @@
 mod cli;
 mod commands;
+mod gui;
 
 use std::process::ExitCode;
 
@@ -30,8 +31,12 @@ fn run(cli: Cli) -> anyhow::Result<ExitCode> {
             kind,
             mode,
         }) => commands::diff(&left, &right, kind, mode.map(Into::into), cli.color.into()),
-        Some(Command::Gui { .. }) | None => {
-            bail!("the desktop app is not implemented yet; try `diffly diff <LEFT> <RIGHT>`")
+        Some(Command::Gui { left, right }) => {
+            gui::run(&left, &right)?;
+            Ok(ExitCode::SUCCESS)
+        }
+        None => {
+            bail!("pass two files: `diffly gui <LEFT> <RIGHT>` or `diffly diff <LEFT> <RIGHT>`")
         }
     }
 }
