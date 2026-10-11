@@ -1,7 +1,7 @@
 use std::collections::HashSet;
 use std::fmt;
 use std::ops::Range;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::rc::Rc;
 
 use anyhow::Context as _;
@@ -13,11 +13,12 @@ use diffly_core::{
 use gpui_kit::base::{TestSupportExt as _, Theme};
 use gpui_kit::component::Disableable as _;
 use gpui_kit::component::button::{Button, Toggle, ToggleGroup, ToggleVariants as _};
+use gpui_kit::component::input::{InputEvent, Textarea, TextareaState};
 use gpui_kit::{
-    AnyElement, App, Context, Div, ElementId, ExternalPaths, HighlightStyle, Hsla, IntoElement,
-    ParentElement, PathPromptOptions, Render, Role, SharedString, Stateful,
-    StatefulInteractiveElement, Styled, StyledText, Window, div, hsla, prelude::*, px,
-    uniform_list,
+    AnyElement, App, Context, Div, ElementId, Entity, ExternalPaths, Focusable, HighlightStyle,
+    Hsla, IntoElement, ParentElement, PathPromptOptions, Render, Role, SharedString, Stateful,
+    StatefulInteractiveElement, Styled, StyledText, Subscription, Window, div, hsla, prelude::*,
+    px, uniform_list,
 };
 
 /// Which diff to run. `Auto` detects JSON and HTML from the file extensions, like the CLI.
@@ -51,11 +52,55 @@ impl Pane {
     }
 }
 
+/// Where one side's input comes from.
+#[derive(Debug)]
+enum Source {
+    File(PathBuf),
+    /// Text pasted into the window, editable in place.
+    Pasted {
+        text: Entity<TextareaState>,
+        /// Re-runs the diff on each edit; dropped with the box.
+        _edits: Subscription,
+    },
+}
+
+impl Source {
+    /// The input's text: the file's contents, or what's in the text box.
+    fn text(&self, cx: &App) -> diffly_core::Result<String> {
+        match self {
+            Self::File(path) => load_source(path),
+            Self::Pasted { text, .. } => Ok(text.read(cx).value().to_string()),
+        }
+    }
+
+    /// Short name for the window title: the file name, or "pasted".
+    fn name(&self) -> String {
+        match self {
+            Self::File(path) => path
+                .file_name()
+                .unwrap_or(path.as_os_str())
+                .to_string_lossy()
+                .into_owned(),
+            Self::Pasted { .. } => "pasted".into(),
+        }
+    }
+}
+
+impl fmt::Display for Source {
+    /// The full path, or "pasted text", for error messages.
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::File(path) => write!(f, "{}", path.display()),
+            Self::Pasted { .. } => f.write_str("pasted text"),
+        }
+    }
+}
+
 /// The comparison window: two sources, a toolbar, and the diff between them.
 #[derive(Debug)]
 pub(crate) struct DiffView {
-    left: Option<PathBuf>,
-    right: Option<PathBuf>,
+    left: Option<Source>,
+    right: Option<Source>,
     kind: KindChoice,
     mode: DiffMode,
     json_view: JsonView,
@@ -91,10 +136,10 @@ enum Content {
 }
 
 impl DiffView {
-    pub(crate) fn new(left: Option<PathBuf>, right: Option<PathBuf>) -> Self {
+    pub(crate) fn new(left: Option<PathBuf>, right: Option<PathBuf>, cx: &App) -> Self {
         let mut view = Self {
-            left,
-            right,
+            left: left.map(Source::File),
+            right: right.map(Source::File),
             kind: KindChoice::Auto,
             mode: DiffMode::default(),
             json_view: JsonView::Tree,
@@ -102,17 +147,17 @@ impl DiffView {
             content: Content::Empty,
             title: String::new(),
         };
-        view.refresh();
+        view.refresh(cx);
         view
     }
 
     /// Re-runs the diff from the current sources and settings.
-    fn refresh(&mut self) {
+    fn refresh(&mut self, cx: &App) {
         let (Some(left), Some(right)) = (&self.left, &self.right) else {
             self.content = Content::Empty;
             return;
         };
-        self.content = match compare(left, right, self.diff_kind()) {
+        self.content = match compare(left, right, self.diff_kind(), cx) {
             Ok(result) => self.content_for(result),
             Err(err) => Content::Error(format!("{err:#}").into()),
         };
@@ -148,7 +193,7 @@ impl DiffView {
         cx.notify();
     }
 
-    fn source(&self, pane: Pane) -> Option<&PathBuf> {
+    fn source(&self, pane: Pane) -> Option<&Source> {
         match pane {
             Pane::Left => self.left.as_ref(),
             Pane::Right => self.right.as_ref(),
@@ -157,14 +202,7 @@ impl DiffView {
 
     /// "diffly — old.txt ↔ new.txt", naming whichever files are chosen.
     fn title(&self) -> String {
-        let name = |pane| {
-            self.source(pane).map_or("?".into(), |path: &PathBuf| {
-                path.file_name()
-                    .unwrap_or(path.as_os_str())
-                    .to_string_lossy()
-                    .into_owned()
-            })
-        };
+        let name = |pane| self.source(pane).map_or("?".into(), Source::name);
         if self.left.is_none() && self.right.is_none() {
             return "diffly".into();
         }
@@ -181,8 +219,11 @@ impl DiffView {
             KindChoice::Text => text,
             KindChoice::Json => InputKind::Json,
             KindChoice::Html => InputKind::Html,
+            // Pasted text has no extension to detect from.
             KindChoice::Auto => match (&self.left, &self.right) {
-                (Some(left), Some(right)) => InputKind::detect_pair(left, right).unwrap_or(text),
+                (Some(Source::File(left)), Some(Source::File(right))) => {
+                    InputKind::detect_pair(left, right).unwrap_or(text)
+                }
                 _ => text,
             },
         }
@@ -196,15 +237,54 @@ impl DiffView {
         }
     }
 
-    fn set_source(&mut self, pane: Pane, path: PathBuf, cx: &mut Context<Self>) {
-        let source = match pane {
+    fn set_source(&mut self, pane: Pane, source: Source, cx: &mut Context<Self>) {
+        let side = match pane {
             Pane::Left => &mut self.left,
             Pane::Right => &mut self.right,
         };
-        *source = Some(path);
+        *side = Some(source);
         self.toggled.clear();
-        self.refresh();
+        self.rerun(cx);
+    }
+
+    /// Re-runs the diff and redraws.
+    fn rerun(&mut self, cx: &mut Context<Self>) {
+        self.refresh(cx);
         cx.notify();
+    }
+
+    /// Makes `pane` an editable text box holding the clipboard's text, and
+    /// re-runs the diff on every edit. On a side that's already pasted, it
+    /// just returns focus to the box, so edits aren't lost.
+    fn paste(&mut self, pane: Pane, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(Source::Pasted { text, .. }) = self.source(pane) {
+            window.focus(&text.focus_handle(cx), cx);
+            return;
+        }
+        let clipboard = cx
+            .read_from_clipboard()
+            .and_then(|item| item.text())
+            .unwrap_or_default();
+        let text = cx.new(|cx| {
+            let mut text = TextareaState::new(window, cx);
+            // Inserting leaves the cursor after the text, and the paste can be undone.
+            text.insert(clipboard, window, cx);
+            text
+        });
+        let edits = cx.subscribe_in(&text, window, |this, _, event: &InputEvent, _, cx| {
+            if matches!(event, InputEvent::Change) {
+                this.rerun(cx);
+            }
+        });
+        window.focus(&text.focus_handle(cx), cx);
+        self.set_source(
+            pane,
+            Source::Pasted {
+                text,
+                _edits: edits,
+            },
+            cx,
+        );
     }
 
     fn choose_file(pane: Pane, cx: &mut Context<Self>) {
@@ -224,7 +304,7 @@ impl DiffView {
                 }
             };
             if let Some(path) = picked {
-                this.update(cx, |this, cx| this.set_source(pane, path, cx))
+                this.update(cx, |this, cx| this.set_source(pane, Source::File(path), cx))
                     .ok();
             }
         })
@@ -232,18 +312,21 @@ impl DiffView {
     }
 }
 
-fn compare(left: &Path, right: &Path, kind: InputKind) -> anyhow::Result<DiffResult> {
-    let left_text =
-        load_source(left).with_context(|| format!("loading left input {}", left.display()))?;
-    let right_text =
-        load_source(right).with_context(|| format!("loading right input {}", right.display()))?;
+fn compare(left: &Source, right: &Source, kind: InputKind, cx: &App) -> anyhow::Result<DiffResult> {
+    let left_text = left
+        .text(cx)
+        .with_context(|| format!("loading left input {left}"))?;
+    let right_text = right
+        .text(cx)
+        .with_context(|| format!("loading right input {right}"))?;
     diff(&left_text, &right_text, &DiffOptions::from(kind))
-        .with_context(|| format!("comparing {} with {}", left.display(), right.display()))
+        .with_context(|| format!("comparing {left} with {right}"))
 }
 
 const ROW_HEIGHT: f32 = 20.;
 const NUMBER_WIDTH: f32 = 48.;
 const TREE_INDENT: f32 = 16.;
+const PASTE_HEIGHT: f32 = 120.;
 
 impl Render for DiffView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
@@ -304,7 +387,6 @@ impl DiffView {
                         cx,
                     )
                     .test_support()
-                    .test_support()
                     .flex_1()
                     .flex()
                     .items_center()
@@ -313,7 +395,7 @@ impl DiffView {
                         panel.child(format!("Drop the {name} file here"))
                     })
                 };
-                let message = "Choose a file for each side";
+                let message = "Choose a file or paste text for each side";
                 let notice = div()
                     .id("empty")
                     .test_support()
@@ -425,49 +507,71 @@ impl DiffView {
             .child(mode_group)
     }
 
-    /// One column's source: its path (or a prompt), a picker button, and a drop target.
+    /// One column's source: its path, pasted text box or a prompt, the
+    /// picker and paste buttons, and a drop target.
     fn render_source(&self, pane: Pane, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = Theme::global(cx).tokens;
-        let shown = self
-            .source(pane)
-            .map(|path| SharedString::from(path.display().to_string()));
         let name = pane.name();
+        let labelled_text = |id: String, text: SharedString| {
+            div()
+                .id(SharedString::from(id))
+                .test_support()
+                .aria_label(text.clone())
+                .flex_1()
+                .min_w_0()
+                .truncate()
+                .child(text)
+                .into_any_element()
+        };
+        let (shown, pasted) = match self.source(pane) {
+            Some(Source::File(path)) => (
+                labelled_text(format!("{name}-path"), path.display().to_string().into()),
+                None,
+            ),
+            Some(Source::Pasted { text, .. }) => (
+                labelled_text(format!("{name}-pasted"), "Pasted text".into()),
+                Some(Textarea::new(text).h(px(PASTE_HEIGHT))),
+            ),
+            None => (
+                div()
+                    .flex_1()
+                    .text_color(theme.colors.muted_foreground)
+                    .child(format!("Drop the {name} file here, or"))
+                    .into_any_element(),
+                None,
+            ),
+        };
 
+        let bar = div()
+            .flex()
+            .items_center()
+            .gap_2()
+            .child(shown)
+            .child(
+                Button::new(SharedString::from(format!("choose-{name}")))
+                    .label("Choose\u{2026}")
+                    .on_click(cx.listener(move |_, _, _, cx| Self::choose_file(pane, cx))),
+            )
+            .child(
+                Button::new(SharedString::from(format!("paste-{name}")))
+                    .label("Paste")
+                    .on_click(cx.listener(move |this, _, window, cx| this.paste(pane, window, cx))),
+            );
         drop_target(
             div().id(SharedString::from(format!("drop-{name}"))),
             pane,
             cx,
         )
         .test_support()
-        .test_support()
         .flex()
+        .flex_col()
         .flex_1()
         .min_w_0()
-        .items_center()
-        .gap_2()
+        .gap_1()
         .px_3()
         .py_1()
-        .child(match shown {
-            Some(shown) => div()
-                .id(SharedString::from(format!("{name}-path")))
-                .test_support()
-                .aria_label(shown.clone())
-                .flex_1()
-                .min_w_0()
-                .truncate()
-                .child(shown)
-                .into_any_element(),
-            None => div()
-                .flex_1()
-                .text_color(theme.colors.muted_foreground)
-                .child(format!("Drop the {name} file here, or"))
-                .into_any_element(),
-        })
-        .child(
-            Button::new(SharedString::from(format!("choose-{name}")))
-                .label("Choose\u{2026}")
-                .on_click(cx.listener(move |_, _, _, cx| Self::choose_file(pane, cx))),
-        )
+        .child(bar)
+        .children(pasted)
     }
 }
 
@@ -491,8 +595,7 @@ fn choice_group<T: Copy + PartialEq + 'static, const N: usize>(
             let before = options.map(|(value, ..)| value == current);
             if let Some(ix) = toggled_index(&before, checks) {
                 set(this, options[ix].0);
-                this.refresh();
-                cx.notify();
+                this.rerun(cx);
             }
         }))
 }
@@ -512,7 +615,7 @@ fn drop_target(element: Stateful<Div>, pane: Pane, cx: &mut Context<DiffView>) -
         .drag_over::<ExternalPaths>(move |style, _, _, _| style.bg(accent))
         .on_drop(cx.listener(move |this, paths: &ExternalPaths, _, cx| {
             if let Some(path) = paths.paths().first() {
-                this.set_source(pane, path.clone(), cx);
+                this.set_source(pane, Source::File(path.clone()), cx);
             }
         }))
 }
@@ -759,9 +862,9 @@ mod tests {
 
     use gpui_kit::test::TestWindowExt;
     use gpui_kit::{
-        AnyWindowHandle, AppContext as _, Bounds, ElementId, ExternalPaths, FileDropEvent,
-        PlatformInput, Point, TestAppContext, VisualTestContext, WindowBounds, WindowOptions, px,
-        size,
+        AnyWindowHandle, AppContext as _, Bounds, ClipboardItem, ElementId, ExternalPaths,
+        FileDropEvent, PlatformInput, Point, TestAppContext, VisualTestContext, WindowBounds,
+        WindowOptions, px, size,
     };
     use tempfile::TempDir;
 
@@ -801,9 +904,11 @@ mod tests {
                 })),
                 ..Default::default()
             };
-            gpui_kit::open_window(options, cx, |_, cx| cx.new(|_| DiffView::new(left, right)))
-                .unwrap()
-                .0
+            gpui_kit::open_window(options, cx, |_, cx| {
+                cx.new(|cx| DiffView::new(left, right, cx))
+            })
+            .unwrap()
+            .0
         })
     }
 
@@ -905,7 +1010,7 @@ mod tests {
 
         assert_eq!(
             label(cx, window, "empty".into()).as_deref(),
-            Some("Choose a file for each side")
+            Some("Choose a file or paste text for each side")
         );
         assert_eq!(label(cx, window, left(0)), None);
     }
@@ -1113,6 +1218,113 @@ mod tests {
         // Choosing HTML explicitly gives the same list.
         click(cx, window, "kind-html");
         assert!(label(cx, window, html(2)).is_some());
+    }
+
+    /// Puts `text` on the clipboard and clicks the `paste-left`/`paste-right` button.
+    fn paste(cx: &mut TestAppContext, window: AnyWindowHandle, button: &'static str, text: &str) {
+        cx.write_to_clipboard(ClipboardItem::new_string(text.to_owned()));
+        click(cx, window, button);
+    }
+
+    #[gpui_kit::test]
+    fn pasted_text_is_compared_with_a_file(cx: &mut TestAppContext) {
+        let dir = files(&[("right.txt", "a\nc\n")]);
+        let window = open(cx, None, Some(&dir.path().join("right.txt")));
+
+        paste(cx, window, "paste-left", "a\nb\n");
+
+        assert_eq!(label(cx, window, left(1)).as_deref(), Some("2 deleted: b"));
+        assert_eq!(
+            label(cx, window, right(1)).as_deref(),
+            Some("2 inserted: c")
+        );
+        assert_eq!(
+            label(cx, window, "left-pasted".into()).as_deref(),
+            Some("Pasted text")
+        );
+        let mut cx = VisualTestContext::from_window(window, cx);
+        cx.run_until_parked();
+        assert_eq!(
+            cx.window_title().as_deref(),
+            Some("diffly \u{2014} pasted \u{2194} right.txt")
+        );
+    }
+
+    #[gpui_kit::test]
+    fn editing_pasted_text_reruns_the_diff(cx: &mut TestAppContext) {
+        let dir = files(&[("left.txt", "b\n")]);
+        let window = open(cx, Some(&dir.path().join("left.txt")), None);
+        paste(cx, window, "paste-right", "b\n");
+        assert_eq!(
+            label(cx, window, right(0)).as_deref(),
+            Some("1 unchanged: b")
+        );
+
+        // Paste leaves the cursor after the pasted text.
+        cx.simulate_input(window, "x");
+
+        assert_eq!(
+            label(cx, window, right(1)).as_deref(),
+            Some("2 inserted: x")
+        );
+    }
+
+    #[gpui_kit::test]
+    fn pasting_again_keeps_the_edited_text(cx: &mut TestAppContext) {
+        let dir = files(&[("left.txt", "b\n")]);
+        let window = open(cx, Some(&dir.path().join("left.txt")), None);
+        paste(cx, window, "paste-right", "b\n");
+        cx.simulate_input(window, "x");
+
+        paste(cx, window, "paste-right", "something else");
+        cx.simulate_input(window, "y");
+
+        assert_eq!(
+            label(cx, window, right(1)).as_deref(),
+            Some("2 inserted: xy")
+        );
+    }
+
+    #[gpui_kit::test]
+    fn pasted_text_needs_an_explicit_kind(cx: &mut TestAppContext) {
+        let window = open(cx, None, None);
+        paste(cx, window, "paste-left", r#"{"a": 1}"#);
+        paste(cx, window, "paste-right", r#"{"a": 2}"#);
+
+        // Without file extensions, Auto compares as text.
+        assert_eq!(
+            label(cx, window, left(0)).as_deref(),
+            Some(r#"1 deleted: {"a": 1}"#)
+        );
+
+        click(cx, window, "kind-json");
+        assert_eq!(
+            label(cx, window, json("$.a")).as_deref(),
+            Some("$.a: 1 \u{2192} 2")
+        );
+    }
+
+    #[gpui_kit::test]
+    fn choosing_a_file_replaces_pasted_text(cx: &mut TestAppContext) {
+        let dir = files(&[("left.txt", "a\n"), ("right.txt", "a\n")]);
+        let picked = dir.path().join("left.txt");
+        let window = open(cx, None, Some(&dir.path().join("right.txt")));
+        paste(cx, window, "paste-left", "z\n");
+        assert_eq!(label(cx, window, left(0)).as_deref(), Some("1 deleted: z"));
+
+        click(cx, window, "choose-left");
+        cx.simulate_path_prompt_response(|_| Some(vec![picked.clone()]));
+        cx.run_until_parked();
+
+        assert_eq!(label(cx, window, "left-pasted".into()), None);
+        assert_eq!(
+            label(cx, window, "left-path".into()),
+            Some(picked.display().to_string())
+        );
+        assert_eq!(
+            label(cx, window, left(0)).as_deref(),
+            Some("1 unchanged: a")
+        );
     }
 
     #[gpui_kit::test]

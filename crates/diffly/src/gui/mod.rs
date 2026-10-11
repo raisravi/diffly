@@ -32,8 +32,9 @@ pub(crate) fn run(left: Option<PathBuf>, right: Option<PathBuf>) -> anyhow::Resu
             }),
             ..Default::default()
         };
-        let opened =
-            gpui_kit::open_window(options, cx, |_, cx| cx.new(|_| DiffView::new(left, right)));
+        let opened = gpui_kit::open_window(options, cx, |_, cx| {
+            cx.new(|cx| DiffView::new(left, right, cx))
+        });
         if let Err(err) = opened {
             *open_error_slot.borrow_mut() = Some(err);
             cx.quit();
