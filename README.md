@@ -14,11 +14,14 @@ diffly diff old.txt new.txt --mode word   # word diff: [-removed-]{+added+}
 diffly diff old.txt new.txt --mode char   # character diff
 diffly diff old.json new.json             # structural JSON diff: $.user.tags[2]: added "admin"
 diffly diff a.txt b.txt --kind json       # force JSON (or --kind text to force a line diff)
+diffly diff old.html new.html             # structural HTML diff: html/body/p/text(): "Hello" → "Hi"
 ```
 
 JSON is detected when both files end in `.json`; key order and formatting are ignored, arrays are compared by index.
 
-In the desktop app, choose each side with **Choose…** or by dropping a file onto it. The toolbar picks the kind (Auto/Text/JSON) and, for text, the granularity (Line/Word/Char), and the diff re-runs on every change. Rows are always whole lines; in Word and Char mode the changed words or characters inside a changed line are highlighted. JSON is shown as a tree of both documents: added values in green, removed in red, changed in amber with old → new. Branches with changes inside start expanded and unchanged ones collapsed; click a branch to toggle it. The Tree/Text switch shows the JSON files side by side as text instead, and invalid JSON shows the parse error. If a file can't be read, the window shows the error instead of the diff.
+HTML is detected when both files end in `.html` or `.htm`, or chosen with `--kind html`. Documents are compared by element structure, attributes and text, so re-indentation, attribute order and comments don't count; whitespace inside `<pre>` and `<textarea>` does. Malformed markup is repaired the way browsers do rather than rejected. Changes are reported by node path, such as `html/body/div#main/li[2]` (`#id` when the element has one, `[n]` among same-tag siblings), with `/text()` for text and `/@name` for attributes.
+
+In the desktop app, choose each side with **Choose…** or by dropping a file onto it. The toolbar picks the kind (Auto/Text/JSON/HTML) and, for text, the granularity (Line/Word/Char), and the diff re-runs on every change. Rows are always whole lines; in Word and Char mode the changed words or characters inside a changed line are highlighted. JSON is shown as a tree of both documents: added values in green, removed in red, changed in amber with old → new. Branches with changes inside start expanded and unchanged ones collapsed; click a branch to toggle it. The Tree/Text switch shows the JSON files side by side as text instead, and invalid JSON shows the parse error. HTML changes are listed by node path. If a file can't be read, the window shows the error instead of the diff.
 
 Exit codes follow `diff(1)`: `0` identical, `1` different, `2` error. Output is colored on a terminal; `--color auto|always|never` overrides that, and `NO_COLOR` is honoured. Use `-v`/`-vv` or `RUST_LOG` for logging.
 

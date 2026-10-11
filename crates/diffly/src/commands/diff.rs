@@ -6,8 +6,8 @@ use anstream::{AutoStream, ColorChoice};
 use anstyle::{AnsiColor, Style};
 use anyhow::{Context, bail};
 use diffly_core::{
-    DiffBody, DiffMode, DiffOptions, DiffResult, DiffStats, InputKind, JsonChangeKind, JsonDiff,
-    TextChangeKind, TextDiff, diff, load_source,
+    DiffBody, DiffMode, DiffOptions, DiffResult, DiffStats, HtmlChangeKind, HtmlDiff, InputKind,
+    JsonChangeKind, JsonDiff, TextChangeKind, TextDiff, diff, load_source,
 };
 
 use crate::cli::KindArg;
@@ -52,6 +52,7 @@ fn resolve_kind(
     let kind = match kind {
         Some(KindArg::Text) => text,
         Some(KindArg::Json) => InputKind::Json,
+        Some(KindArg::Html) => InputKind::Html,
         None => InputKind::detect_pair(left, right).unwrap_or(text),
     };
     if mode.is_some() && !matches!(kind, InputKind::Text(_)) {
@@ -92,7 +93,39 @@ fn render(out: &mut impl Write, result: &DiffResult) -> io::Result<()> {
     match &result.body {
         DiffBody::Text(text) => render_text(out, text, result.stats),
         DiffBody::Json(json) => render_json(out, json, result.stats),
+        DiffBody::Html(html) => render_html(out, html, result.stats),
     }
+}
+
+fn render_html(out: &mut impl Write, html: &HtmlDiff, stats: DiffStats) -> io::Result<()> {
+    for change in &html.changes {
+        let path = &change.path;
+        match &change.kind {
+            HtmlChangeKind::TextChanged { left, right }
+            | HtmlChangeKind::AttributeChanged { left, right } => {
+                write!(out, "{path}: ")?;
+                paint(out, DELETE, &format!("{left:?}"))?;
+                write!(out, " \u{2192} ")?;
+                paint(out, INSERT, &format!("{right:?}"))?;
+            }
+            HtmlChangeKind::Removed(node) => {
+                paint(out, DELETE, &format!("{path}: removed {node}"))?;
+            }
+            HtmlChangeKind::Added(node) => paint(out, INSERT, &format!("{path}: added {node}"))?,
+            HtmlChangeKind::AttributeRemoved(value) => {
+                paint(out, DELETE, &format!("{path}: removed {value:?}"))?;
+            }
+            HtmlChangeKind::AttributeAdded(value) => {
+                paint(out, INSERT, &format!("{path}: added {value:?}"))?;
+            }
+        }
+        writeln!(out)?;
+    }
+    writeln!(
+        out,
+        "{} added, {} removed, {} changed (html)",
+        stats.inserted, stats.deleted, stats.changed
+    )
 }
 
 fn render_json(out: &mut impl Write, json: &JsonDiff, stats: DiffStats) -> io::Result<()> {

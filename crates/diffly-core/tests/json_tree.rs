@@ -8,7 +8,7 @@ use pretty_assertions::assert_eq;
 fn tree(left: &str, right: &str) -> JsonNode {
     match diff(left, right, &DiffOptions::json()).unwrap().body {
         DiffBody::Json(json) => json.tree,
-        DiffBody::Text(_) => panic!("expected a JSON diff"),
+        _ => panic!("expected a JSON diff"),
     }
 }
 

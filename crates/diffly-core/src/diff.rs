@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use crate::{DiffMode, DiffResult, Result, json, text};
+use crate::{DiffMode, DiffResult, Result, html, json, text};
 
 /// What kind of data the two inputs hold, which decides how they are compared.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -10,6 +10,8 @@ pub enum InputKind {
     Text(DiffMode),
     /// JSON documents, compared as parsed values.
     Json,
+    /// HTML documents, compared by element structure, attributes and text.
+    Html,
 }
 
 impl InputKind {
@@ -17,8 +19,12 @@ impl InputKind {
     /// anything else; callers fall back to a text diff.
     #[must_use]
     pub fn detect(path: &Path) -> Option<Self> {
-        let extension = path.extension()?.to_str()?;
-        extension.eq_ignore_ascii_case("json").then_some(Self::Json)
+        let extension = path.extension()?.to_str()?.to_ascii_lowercase();
+        match extension.as_str() {
+            "json" => Some(Self::Json),
+            "html" | "htm" => Some(Self::Html),
+            _ => None,
+        }
     }
 
     /// Detects the kind for a pair of inputs: both must be recognised as the same
@@ -60,6 +66,14 @@ impl DiffOptions {
             kind: InputKind::Json,
         }
     }
+
+    /// Structural comparison of two HTML documents.
+    #[must_use]
+    pub fn html() -> Self {
+        Self {
+            kind: InputKind::Html,
+        }
+    }
 }
 
 impl From<InputKind> for DiffOptions {
@@ -75,5 +89,6 @@ pub fn diff(left: &str, right: &str, options: &DiffOptions) -> Result<DiffResult
     match options.kind {
         InputKind::Text(mode) => Ok(text::diff_text(left, right, mode)),
         InputKind::Json => json::diff_json(left, right),
+        InputKind::Html => Ok(html::diff_html(left, right)),
     }
 }

@@ -6,9 +6,9 @@ use std::rc::Rc;
 
 use anyhow::Context as _;
 use diffly_core::{
-    DiffBody, DiffMode, DiffOptions, DiffResult, DiffStats, InputKind, JsonChangeKind, JsonNode,
-    JsonNodeKind, JsonPath, PathSegment, SideBySideRow, SideLine, TextChangeKind, diff,
-    load_source,
+    DiffBody, DiffMode, DiffOptions, DiffResult, DiffStats, HtmlChange, HtmlChangeKind, InputKind,
+    JsonChangeKind, JsonNode, JsonNodeKind, JsonPath, PathSegment, SideBySideRow, SideLine,
+    TextChangeKind, diff, load_source,
 };
 use gpui_kit::base::{TestSupportExt as _, Theme};
 use gpui_kit::component::Disableable as _;
@@ -20,12 +20,13 @@ use gpui_kit::{
     uniform_list,
 };
 
-/// Which diff to run. `Auto` detects JSON from the file extensions, like the CLI.
+/// Which diff to run. `Auto` detects JSON and HTML from the file extensions, like the CLI.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum KindChoice {
     Auto,
     Text,
     Json,
+    Html,
 }
 
 /// How a JSON diff is shown: as a tree of both documents, or as their text side by side.
@@ -81,6 +82,10 @@ enum Content {
         rows: Rc<[TreeRow]>,
         stats: DiffStats,
     },
+    Html {
+        changes: Rc<[HtmlChange]>,
+        stats: DiffStats,
+    },
     /// Shown instead of a diff when the files can't be compared.
     Error(SharedString),
 }
@@ -123,6 +128,10 @@ impl DiffView {
             DiffBody::Json(json) => Content::Json {
                 rows: tree_rows(&json.tree, &self.toggled).into(),
                 tree: json.tree,
+                stats,
+            },
+            DiffBody::Html(html) => Content::Html {
+                changes: html.changes.into(),
                 stats,
             },
         }
@@ -171,6 +180,7 @@ impl DiffView {
         match self.kind {
             KindChoice::Text => text,
             KindChoice::Json => InputKind::Json,
+            KindChoice::Html => InputKind::Html,
             KindChoice::Auto => match (&self.left, &self.right) {
                 (Some(left), Some(right)) => InputKind::detect_pair(left, right).unwrap_or(text),
                 _ => text,
@@ -341,6 +351,19 @@ impl DiffView {
                 );
                 (monospace(list).into_any_element(), summary)
             }
+            Content::Html { changes, stats } => {
+                let changes = Rc::clone(changes);
+                let list = uniform_list("html-changes", changes.len(), move |range, _, _| {
+                    range
+                        .map(|ix| render_html_change(ix, &changes[ix]))
+                        .collect()
+                });
+                let summary = format!(
+                    "{} added, {} removed, {} changed (html)",
+                    stats.inserted, stats.deleted, stats.changed
+                );
+                (monospace(list).into_any_element(), summary)
+            }
             Content::Error(message) => {
                 let panel = div()
                     .id("load-error")
@@ -363,6 +386,7 @@ impl DiffView {
             (KindChoice::Auto, "kind-auto", "Auto"),
             (KindChoice::Text, "kind-text", "Text"),
             (KindChoice::Json, "kind-json", "JSON"),
+            (KindChoice::Html, "kind-html", "HTML"),
         ];
         let modes = [
             (DiffMode::Line, "mode-line", "Line"),
@@ -690,6 +714,33 @@ fn render_tree_row(row: &TreeRow, cx: &mut Context<DiffView>) -> AnyElement {
         .cursor_pointer()
         .hover(|style| style.bg(theme.colors.muted))
         .on_click(cx.listener(move |this, _, _, cx| this.toggle_branch(&path, cx)))
+        .into_any_element()
+}
+
+/// One HTML change, by node path, tinted by what happened.
+fn render_html_change(ix: usize, change: &HtmlChange) -> AnyElement {
+    let path = &change.path;
+    let (text, background) = match &change.kind {
+        HtmlChangeKind::TextChanged { left, right }
+        | HtmlChangeKind::AttributeChanged { left, right } => {
+            (format!("{path}: {left:?} \u{2192} {right:?}"), CHANGED)
+        }
+        HtmlChangeKind::Added(node) => (format!("{path}: added {node}"), INSERTED),
+        HtmlChangeKind::Removed(node) => (format!("{path}: removed {node}"), DELETED),
+        HtmlChangeKind::AttributeAdded(value) => (format!("{path}: added {value:?}"), INSERTED),
+        HtmlChangeKind::AttributeRemoved(value) => (format!("{path}: removed {value:?}"), DELETED),
+    };
+    div()
+        .id(("html", ix))
+        .test_support()
+        .aria_label(text.clone())
+        .w_full()
+        .h(px(ROW_HEIGHT))
+        .px_3()
+        .whitespace_nowrap()
+        .overflow_hidden()
+        .bg(background)
+        .child(text)
         .into_any_element()
 }
 
@@ -1026,6 +1077,42 @@ mod tests {
             "{message}"
         );
         assert_eq!(label(cx, window, json("$")), None);
+    }
+
+    #[gpui_kit::test]
+    fn html_files_are_detected_and_listed_by_path(cx: &mut TestAppContext) {
+        let dir = files(&[
+            ("a.html", r#"<p>Hello</p><a href="x">l</a>"#),
+            ("b.html", r#"<p>Hi</p><a href="y">l</a><br>"#),
+        ]);
+        let window = open(
+            cx,
+            Some(&dir.path().join("a.html")),
+            Some(&dir.path().join("b.html")),
+        );
+
+        let html = |ix: usize| ElementId::from(("html", ix));
+        assert_eq!(
+            label(cx, window, html(0)).as_deref(),
+            Some("html/body/p/text(): \"Hello\" \u{2192} \"Hi\"")
+        );
+        assert_eq!(
+            label(cx, window, html(1)).as_deref(),
+            Some("html/body/a/@href: \"x\" \u{2192} \"y\"")
+        );
+        assert_eq!(
+            label(cx, window, html(2)).as_deref(),
+            Some("html/body/br: added <br>")
+        );
+        cx.update_window(window, |_, window, cx| {
+            window.render_frame(cx);
+            assert_eq!(window.find("kind-auto").checked(), Some(true));
+        })
+        .unwrap();
+
+        // Choosing HTML explicitly gives the same list.
+        click(cx, window, "kind-html");
+        assert!(label(cx, window, html(2)).is_some());
     }
 
     #[gpui_kit::test]

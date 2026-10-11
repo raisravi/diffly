@@ -1,4 +1,4 @@
-use crate::{JsonDiff, TextDiff};
+use crate::{HtmlDiff, JsonDiff, TextDiff};
 
 /// Kind-specific detail of a diff.
 ///
@@ -8,6 +8,7 @@ use crate::{JsonDiff, TextDiff};
 pub enum DiffBody {
     Text(TextDiff),
     Json(JsonDiff),
+    Html(HtmlDiff),
 }
 
 /// How much differs. For text these count tokens (lines, words or chars);

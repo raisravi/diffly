@@ -23,7 +23,7 @@ fn rows(result: &DiffResult) -> Vec<Row> {
             .iter()
             .map(|c| (c.path.to_string(), c.kind.clone()))
             .collect(),
-        DiffBody::Text(_) => panic!("expected a JSON diff"),
+        _ => panic!("expected a JSON diff"),
     }
 }
 
@@ -218,7 +218,7 @@ fn numbers_are_shown_as_written_and_large_integers_keep_precision() {
                 other => panic!("expected a change, got {other:?}"),
             })
             .collect(),
-        DiffBody::Text(_) => panic!("expected a JSON diff"),
+        _ => panic!("expected a JSON diff"),
     };
     assert_eq!(
         shown,

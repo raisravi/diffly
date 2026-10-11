@@ -18,6 +18,8 @@ anstyle = "1"
 anyhow = "1"
 clap = { version = "4.5", features = ["derive", "env", "wrap_help"] }
 gpui-kit = "0.7.1"
+# Lenient, browser-grade HTML parsing (html5ever) into a tree.
+scraper = { version = "0.27", default-features = false }
 serde_json = { version = "1", features = ["arbitrary_precision", "preserve_order"] }
 similar = "2"
 thiserror = "2"

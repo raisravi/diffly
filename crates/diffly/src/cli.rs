@@ -28,7 +28,8 @@ pub(crate) enum Command {
         /// Modified file.
         right: PathBuf,
         /// How to compare the inputs. By default both files must end in `.json`
-        /// to be compared as JSON; anything else is compared as text.
+        /// to be compared as JSON, or in `.html`/`.htm` to be compared as HTML;
+        /// anything else is compared as text.
         #[arg(short, long, value_enum)]
         kind: Option<KindArg>,
         /// Text diff granularity [default: line]. Only valid for text diffs.
@@ -65,6 +66,7 @@ impl From<ColorArg> for anstream::ColorChoice {
 pub(crate) enum KindArg {
     Text,
     Json,
+    Html,
 }
 
 /// CLI mirror of [`DiffMode`] so the core crate stays free of clap.

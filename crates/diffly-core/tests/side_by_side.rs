@@ -15,7 +15,7 @@ fn rows(left: &str, right: &str) -> Vec<SideBySideRow> {
 fn rows_in(mode: DiffMode, left: &str, right: &str) -> Vec<SideBySideRow> {
     match diff(left, right, &DiffOptions::text(mode)).unwrap().body {
         DiffBody::Text(text) => text.side_by_side(),
-        DiffBody::Json(_) => panic!("expected a text diff"),
+        _ => panic!("expected a text diff"),
     }
 }
 

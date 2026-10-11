@@ -329,3 +329,64 @@ fn carriage_returns_stay_outside_colored_spans() {
             "{RED}-b{RESET}\r\n{GREEN}+c{RESET}\r\n"
         )));
 }
+
+#[test]
+fn html_files_are_diffed_structurally() {
+    let dir = write_files(&[
+        ("a.html", r#"<p>Hello</p><a href="x" title="t">l</a>"#),
+        ("b.html", r#"<p>Hi</p><a href="y">l</a><br>"#),
+    ]);
+    diffly()
+        .current_dir(dir.path())
+        .args(["diff", "a.html", "b.html"])
+        .assert()
+        .code(1)
+        .stdout(
+            "html/body/p/text(): \"Hello\" \u{2192} \"Hi\"\n\
+             html/body/a/@href: \"x\" \u{2192} \"y\"\n\
+             html/body/a/@title: removed \"t\"\n\
+             html/body/br: added <br>\n\
+             1 added, 0 removed, 3 changed (html)\n",
+        );
+}
+
+#[test]
+fn reformatted_equal_html_is_identical_and_htm_is_detected() {
+    let dir = write_files(&[
+        ("a.htm", r#"<div id="m" class="c"><p>Hi   there</p></div>"#),
+        (
+            "b.html",
+            "<div class=\"c\" id=\"m\">\n  <p>\n    Hi there\n  </p>\n</div>\n",
+        ),
+    ]);
+    diffly()
+        .current_dir(dir.path())
+        .args(["diff", "a.htm", "b.html"])
+        .assert()
+        .success()
+        .stdout("0 added, 0 removed, 0 changed (html)\n");
+}
+
+#[test]
+fn kind_html_applies_to_files_without_html_extension() {
+    let dir = write_files(&[("a.txt", "<p>a</p>"), ("b.txt", "<p>b</p>")]);
+    diffly()
+        .current_dir(dir.path())
+        .args(["diff", "a.txt", "b.txt", "--kind", "html"])
+        .assert()
+        .code(1)
+        .stdout(predicate::str::contains(
+            "html/body/p/text(): \"a\" \u{2192} \"b\"",
+        ));
+}
+
+#[test]
+fn kind_text_overrides_html_detection() {
+    let dir = write_files(&[("a.html", "<p>a</p>\n"), ("b.html", "<p>b</p>\n")]);
+    diffly()
+        .current_dir(dir.path())
+        .args(["diff", "a.html", "b.html", "--kind", "text"])
+        .assert()
+        .code(1)
+        .stdout(predicate::str::contains("-<p>a</p>\n+<p>b</p>\n"));
+}

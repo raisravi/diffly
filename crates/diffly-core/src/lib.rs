@@ -5,6 +5,7 @@
 
 mod diff;
 mod error;
+mod html;
 mod json;
 mod mode;
 mod result;
@@ -14,6 +15,7 @@ mod text;
 
 pub use diff::{DiffOptions, InputKind, diff};
 pub use error::{DiffError, Result};
+pub use html::{HtmlChange, HtmlChangeKind, HtmlDiff};
 pub use json::{
     JsonChange, JsonChangeKind, JsonDiff, JsonNode, JsonNodeKind, JsonPath, PathSegment,
 };

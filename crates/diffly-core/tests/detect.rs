@@ -36,3 +36,18 @@ fn a_pair_is_detected_only_when_both_sides_agree() {
     assert_eq!(InputKind::detect_pair(text, json), None);
     assert_eq!(InputKind::detect_pair(text, text), None);
 }
+
+#[test]
+fn html_and_htm_extensions_are_detected_case_insensitively() {
+    for name in ["a.html", "a.htm", "dir/B.HTML"] {
+        assert_eq!(
+            InputKind::detect(Path::new(name)),
+            Some(InputKind::Html),
+            "{name}"
+        );
+    }
+    assert_eq!(
+        InputKind::detect_pair(Path::new("a.htm"), Path::new("b.html")),
+        Some(InputKind::Html)
+    );
+}
