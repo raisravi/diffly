@@ -15,6 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Colored diff output (insertions green, deletions red) with `--color auto|always|never`; `auto` honours `NO_COLOR` and `CLICOLOR_FORCE`.
 - Desktop app (GPUI Kit): `diffly` or `diffly gui [LEFT] [RIGHT]` compares two files side by side, with deletions on the left and insertions on the right; load errors are shown in the window.
 - In the app, choose files with a picker or by drag and drop, and pick the kind (auto/text/json) and granularity (line/word/char) from a toolbar; the diff re-runs on every change. Word and char modes highlight the changed parts of each changed line; JSON is listed by path.
+- JSON tree view in the app: both documents as one collapsible tree with added, removed and changed values highlighted (changed paths expanded by default), and a Tree/Text switch to see the JSON side by side as text.
 - Dev tooling: justfile, bacon, clippy/rustfmt config, cargo-deny, typos, taplo, pre-commit hook, CI.
 
 ### Changed

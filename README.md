@@ -18,7 +18,7 @@ diffly diff a.txt b.txt --kind json       # force JSON (or --kind text to force 
 
 JSON is detected when both files end in `.json`; key order and formatting are ignored, arrays are compared by index.
 
-In the desktop app, choose each side with **Choose…** or by dropping a file onto it. The toolbar picks the kind (Auto/Text/JSON) and, for text, the granularity (Line/Word/Char), and the diff re-runs on every change. Rows are always whole lines; in Word and Char mode the changed words or characters inside a changed line are highlighted. JSON is shown as a list of changes by path for now. If a file can't be read, the window shows the error instead of the diff.
+In the desktop app, choose each side with **Choose…** or by dropping a file onto it. The toolbar picks the kind (Auto/Text/JSON) and, for text, the granularity (Line/Word/Char), and the diff re-runs on every change. Rows are always whole lines; in Word and Char mode the changed words or characters inside a changed line are highlighted. JSON is shown as a tree of both documents: added values in green, removed in red, changed in amber with old → new. Branches with changes inside start expanded and unchanged ones collapsed; click a branch to toggle it. The Tree/Text switch shows the JSON files side by side as text instead, and invalid JSON shows the parse error. If a file can't be read, the window shows the error instead of the diff.
 
 Exit codes follow `diff(1)`: `0` identical, `1` different, `2` error. Output is colored on a terminal; `--color auto|always|never` overrides that, and `NO_COLOR` is honoured. Use `-v`/`-vv` or `RUST_LOG` for logging.
 

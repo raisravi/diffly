@@ -58,6 +58,31 @@ pub struct JsonChange {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct JsonDiff {
     pub changes: Vec<JsonChange>,
+    /// Both documents merged into one tree, unchanged values included.
+    pub tree: JsonNode,
+}
+
+/// A value in the merged tree of two JSON documents.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct JsonNode {
+    pub path: JsonPath,
+    pub kind: JsonNodeKind,
+    /// Whether this node, or anything below it, differs between the documents.
+    pub changed: bool,
+}
+
+/// What a [`JsonNode`] holds. Children are in the same order as
+/// [`JsonDiff::changes`]: the left document's order, then keys only on the right.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum JsonNodeKind {
+    /// An object on both sides.
+    Object(Vec<JsonNode>),
+    /// An array on both sides, children matched by index.
+    Array(Vec<JsonNode>),
+    /// A value equal on both sides, as the left document spells it.
+    Unchanged(Value),
+    /// A value that differs, including a whole added or removed subtree.
+    Change(JsonChangeKind),
 }
 
 pub(crate) fn diff_json(left: &str, right: &str) -> Result<DiffResult> {
@@ -65,7 +90,7 @@ pub(crate) fn diff_json(left: &str, right: &str) -> Result<DiffResult> {
     let right = parse(right, Side::Right)?;
 
     let mut walker = Walker::default();
-    walker.compare(&left, &right);
+    let tree = walker.compare(&left, &right);
 
     let mut stats = DiffStats::default();
     for change in &walker.changes {
@@ -80,6 +105,7 @@ pub(crate) fn diff_json(left: &str, right: &str) -> Result<DiffResult> {
         stats,
         body: DiffBody::Json(JsonDiff {
             changes: walker.changes,
+            tree,
         }),
     })
 }
@@ -111,50 +137,55 @@ struct Walker {
 }
 
 impl Walker {
-    fn compare(&mut self, left: &Value, right: &Value) {
+    fn compare(&mut self, left: &Value, right: &Value) -> JsonNode {
         match (left, right) {
             (Value::Object(left), Value::Object(right)) => {
+                let mut children = Vec::new();
                 for (key, left_value) in left {
-                    self.at(PathSegment::Key(key.clone()), |walker| {
+                    children.push(self.at(PathSegment::Key(key.clone()), |walker| {
                         match right.get(key) {
                             Some(right_value) => walker.compare(left_value, right_value),
                             None => walker.record(JsonChangeKind::Removed(left_value.clone())),
                         }
-                    });
+                    }));
                 }
                 for (key, right_value) in right {
                     if !left.contains_key(key) {
-                        self.at(PathSegment::Key(key.clone()), |walker| {
-                            walker.record(JsonChangeKind::Added(right_value.clone()));
-                        });
+                        children.push(self.at(PathSegment::Key(key.clone()), |walker| {
+                            walker.record(JsonChangeKind::Added(right_value.clone()))
+                        }));
                     }
                 }
+                self.branch(JsonNodeKind::Object, children)
             }
             (Value::Array(left), Value::Array(right)) => {
-                for index in 0..left.len().max(right.len()) {
-                    self.at(PathSegment::Index(index), |walker| {
-                        match (left.get(index), right.get(index)) {
-                            (Some(left), Some(right)) => walker.compare(left, right),
-                            (Some(left), None) => {
-                                walker.record(JsonChangeKind::Removed(left.clone()));
+                let children = (0..left.len().max(right.len()))
+                    .map(|index| {
+                        self.at(PathSegment::Index(index), |walker| {
+                            match (left.get(index), right.get(index)) {
+                                (Some(left), Some(right)) => walker.compare(left, right),
+                                (Some(left), None) => {
+                                    walker.record(JsonChangeKind::Removed(left.clone()))
+                                }
+                                (None, Some(right)) => {
+                                    walker.record(JsonChangeKind::Added(right.clone()))
+                                }
+                                (None, None) => {
+                                    unreachable!("index is below the longer array's length")
+                                }
                             }
-                            (None, Some(right)) => {
-                                walker.record(JsonChangeKind::Added(right.clone()));
-                            }
-                            (None, None) => {
-                                unreachable!("index is below the longer array's length")
-                            }
-                        }
-                    });
-                }
+                        })
+                    })
+                    .collect();
+                self.branch(JsonNodeKind::Array, children)
             }
             // `Value`'s own equality compares numbers by spelling.
-            (Value::Number(l), Value::Number(r)) if numbers_equal(l, r) => {}
+            (Value::Number(l), Value::Number(r)) if numbers_equal(l, r) => self.unchanged(left),
             (Value::Number(_), Value::Number(_)) => self.record(JsonChangeKind::Changed {
                 left: left.clone(),
                 right: right.clone(),
             }),
-            _ if left == right => {}
+            _ if left == right => self.unchanged(left),
             _ => self.record(JsonChangeKind::Changed {
                 left: left.clone(),
                 right: right.clone(),
@@ -163,16 +194,36 @@ impl Walker {
     }
 
     /// Runs `f` with `segment` appended to the current path.
-    fn at(&mut self, segment: PathSegment, f: impl FnOnce(&mut Self)) {
+    fn at<T>(&mut self, segment: PathSegment, f: impl FnOnce(&mut Self) -> T) -> T {
         self.path.push(segment);
-        f(self);
+        let result = f(self);
         self.path.pop();
+        result
     }
 
-    fn record(&mut self, kind: JsonChangeKind) {
-        self.changes.push(JsonChange {
+    fn node(&self, kind: JsonNodeKind, changed: bool) -> JsonNode {
+        JsonNode {
             path: JsonPath(self.path.clone()),
             kind,
+            changed,
+        }
+    }
+
+    fn branch(&self, kind: fn(Vec<JsonNode>) -> JsonNodeKind, children: Vec<JsonNode>) -> JsonNode {
+        let changed = children.iter().any(|child| child.changed);
+        self.node(kind(children), changed)
+    }
+
+    fn unchanged(&self, value: &Value) -> JsonNode {
+        self.node(JsonNodeKind::Unchanged(value.clone()), false)
+    }
+
+    fn record(&mut self, kind: JsonChangeKind) -> JsonNode {
+        let node = self.node(JsonNodeKind::Change(kind.clone()), true);
+        self.changes.push(JsonChange {
+            path: node.path.clone(),
+            kind,
         });
+        node
     }
 }

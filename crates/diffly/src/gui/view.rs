@@ -1,10 +1,14 @@
+use std::collections::HashSet;
+use std::fmt;
+use std::ops::Range;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
 use anyhow::Context as _;
 use diffly_core::{
-    DiffBody, DiffMode, DiffOptions, DiffStats, InputKind, JsonChange, JsonChangeKind,
-    SideBySideRow, SideLine, TextChangeKind, diff, load_source,
+    DiffBody, DiffMode, DiffOptions, DiffResult, DiffStats, InputKind, JsonChangeKind, JsonNode,
+    JsonNodeKind, JsonPath, PathSegment, SideBySideRow, SideLine, TextChangeKind, diff,
+    load_source,
 };
 use gpui_kit::base::{TestSupportExt as _, Theme};
 use gpui_kit::component::Disableable as _;
@@ -22,6 +26,13 @@ enum KindChoice {
     Auto,
     Text,
     Json,
+}
+
+/// How a JSON diff is shown: as a tree of both documents, or as their text side by side.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum JsonView {
+    Tree,
+    Text,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -46,6 +57,10 @@ pub(crate) struct DiffView {
     right: Option<PathBuf>,
     kind: KindChoice,
     mode: DiffMode,
+    json_view: JsonView,
+    /// Tree branches the user expanded or collapsed, away from their default
+    /// (expanded when something inside changed, collapsed otherwise).
+    toggled: HashSet<JsonPath>,
     content: Content,
     /// The window title last set, so it's only pushed to the platform on change.
     title: String,
@@ -61,7 +76,9 @@ enum Content {
         stats: DiffStats,
     },
     Json {
-        changes: Rc<[JsonChange]>,
+        tree: JsonNode,
+        /// The tree's visible rows, rebuilt when a branch is toggled.
+        rows: Rc<[TreeRow]>,
         stats: DiffStats,
     },
     /// Shown instead of a diff when the files can't be compared.
@@ -75,6 +92,8 @@ impl DiffView {
             right,
             kind: KindChoice::Auto,
             mode: DiffMode::default(),
+            json_view: JsonView::Tree,
+            toggled: HashSet::new(),
             content: Content::Empty,
             title: String::new(),
         };
@@ -88,8 +107,36 @@ impl DiffView {
             self.content = Content::Empty;
             return;
         };
-        self.content = compare(left, right, self.input_kind())
-            .unwrap_or_else(|err| Content::Error(format!("{err:#}").into()));
+        self.content = match compare(left, right, self.diff_kind()) {
+            Ok(result) => self.content_for(result),
+            Err(err) => Content::Error(format!("{err:#}").into()),
+        };
+    }
+
+    fn content_for(&self, result: DiffResult) -> Content {
+        let stats = result.stats;
+        match result.body {
+            DiffBody::Text(text) => Content::Text {
+                rows: text.side_by_side().into(),
+                stats,
+            },
+            DiffBody::Json(json) => Content::Json {
+                rows: tree_rows(&json.tree, &self.toggled).into(),
+                tree: json.tree,
+                stats,
+            },
+        }
+    }
+
+    /// Expands a collapsed tree branch, or collapses an expanded one.
+    fn toggle_branch(&mut self, path: &JsonPath, cx: &mut Context<Self>) {
+        if !self.toggled.remove(path) {
+            self.toggled.insert(path.clone());
+        }
+        if let Content::Json { tree, rows, .. } = &mut self.content {
+            *rows = tree_rows(tree, &self.toggled).into();
+        }
+        cx.notify();
     }
 
     fn source(&self, pane: Pane) -> Option<&PathBuf> {
@@ -131,12 +178,21 @@ impl DiffView {
         }
     }
 
+    /// The diff to run: the input kind, except that JSON's text view diffs it as text.
+    fn diff_kind(&self) -> InputKind {
+        match self.input_kind() {
+            InputKind::Json if self.json_view == JsonView::Text => InputKind::Text(self.mode),
+            kind => kind,
+        }
+    }
+
     fn set_source(&mut self, pane: Pane, path: PathBuf, cx: &mut Context<Self>) {
         let source = match pane {
             Pane::Left => &mut self.left,
             Pane::Right => &mut self.right,
         };
         *source = Some(path);
+        self.toggled.clear();
         self.refresh();
         cx.notify();
     }
@@ -166,28 +222,18 @@ impl DiffView {
     }
 }
 
-fn compare(left: &Path, right: &Path, kind: InputKind) -> anyhow::Result<Content> {
+fn compare(left: &Path, right: &Path, kind: InputKind) -> anyhow::Result<DiffResult> {
     let left_text =
         load_source(left).with_context(|| format!("loading left input {}", left.display()))?;
     let right_text =
         load_source(right).with_context(|| format!("loading right input {}", right.display()))?;
-    let result = diff(&left_text, &right_text, &DiffOptions::from(kind))
-        .with_context(|| format!("comparing {} with {}", left.display(), right.display()))?;
-    let stats = result.stats;
-    Ok(match result.body {
-        DiffBody::Text(text) => Content::Text {
-            rows: text.side_by_side().into(),
-            stats,
-        },
-        DiffBody::Json(json) => Content::Json {
-            changes: json.changes.into(),
-            stats,
-        },
-    })
+    diff(&left_text, &right_text, &DiffOptions::from(kind))
+        .with_context(|| format!("comparing {} with {}", left.display(), right.display()))
 }
 
 const ROW_HEIGHT: f32 = 20.;
 const NUMBER_WIDTH: f32 = 48.;
+const TREE_INDENT: f32 = 16.;
 
 impl Render for DiffView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
@@ -280,13 +326,15 @@ impl DiffView {
                 );
                 (monospace(list).into_any_element(), summary)
             }
-            Content::Json { changes, stats } => {
-                let changes = Rc::clone(changes);
-                let list = uniform_list("json-changes", changes.len(), move |range, _, _| {
-                    range
-                        .map(|ix| render_json_change(ix, &changes[ix]))
-                        .collect()
-                });
+            Content::Json { rows, stats, .. } => {
+                let rows = Rc::clone(rows);
+                let list = uniform_list(
+                    "json-tree",
+                    rows.len(),
+                    cx.processor(move |_, range: Range<usize>, _, cx| {
+                        range.map(|ix| render_tree_row(&rows[ix], cx)).collect()
+                    }),
+                );
                 let summary = format!(
                     "{} added, {} removed, {} changed (json)",
                     stats.inserted, stats.deleted, stats.changed
@@ -321,9 +369,22 @@ impl DiffView {
             (DiffMode::Word, "mode-word", "Word"),
             (DiffMode::Char, "mode-char", "Char"),
         ];
-        // Granularity only applies to text; JSON is always compared by structure.
-        let is_text = matches!(self.input_kind(), InputKind::Text(_));
+        let views = [
+            (JsonView::Tree, "view-tree", "Tree"),
+            (JsonView::Text, "view-text", "Text"),
+        ];
+        // Granularity only applies to text; the JSON tree is compared by structure.
+        let is_text = matches!(self.diff_kind(), InputKind::Text(_));
+        let is_json = self.input_kind() == InputKind::Json;
         let kind_group = choice_group("kind", kinds, self.kind, |this, kind| this.kind = kind, cx);
+        let view_group = choice_group(
+            "view",
+            views,
+            self.json_view,
+            |this, view| this.json_view = view,
+            cx,
+        )
+        .disabled(!is_json);
         let mode_group = choice_group("mode", modes, self.mode, |this, mode| this.mode = mode, cx)
             .disabled(!is_text);
 
@@ -336,6 +397,7 @@ impl DiffView {
             .border_b_1()
             .border_color(Theme::global(cx).tokens.colors.border)
             .child(kind_group)
+            .child(view_group)
             .child(mode_group)
     }
 
@@ -498,36 +560,143 @@ fn tint(kind: TextChangeKind) -> Option<(Hsla, Hsla)> {
     }
 }
 
-/// A placeholder list until the structural JSON view (#8).
-fn render_json_change(ix: usize, change: &JsonChange) -> AnyElement {
-    let path = &change.path;
-    let (text, kind) = match &change.kind {
-        JsonChangeKind::Changed { left, right } => (
-            format!("{path}: {left} \u{2192} {right}"),
-            TextChangeKind::Equal,
+/// One visible node of the JSON tree, flattened for the virtualized list.
+#[derive(Debug)]
+struct TreeRow {
+    path: JsonPath,
+    /// Left padding: one [`TREE_INDENT`] per level below the root.
+    indent: f32,
+    /// A branch's open/closed chevron, or `+`/`−` for an added/removed leaf.
+    gutter: &'static str,
+    /// The node's key, `[index]`, or `$` for the root.
+    name: String,
+    /// The value as drawn: `{2}` for an object, `30 → 31` for a changed leaf.
+    value: String,
+    /// The value as described to assistive tech and tests, e.g. `added 1`.
+    accessible_value: String,
+    background: Option<Hsla>,
+    /// `Some(expanded)` for an object or array, `None` for a leaf.
+    expanded: Option<bool>,
+}
+
+/// The rows of `tree` that are on screen, depth-first, skipping collapsed branches.
+fn tree_rows(tree: &JsonNode, toggled: &HashSet<JsonPath>) -> Vec<TreeRow> {
+    let mut rows = Vec::new();
+    push_tree_rows(tree, 0., toggled, &mut rows);
+    rows
+}
+
+fn push_tree_rows(
+    node: &JsonNode,
+    indent: f32,
+    toggled: &HashSet<JsonPath>,
+    rows: &mut Vec<TreeRow>,
+) {
+    // `change` is `(word for the accessible label, marker drawn in the gutter)`.
+    let (children, value, change, background) = match &node.kind {
+        JsonNodeKind::Object(children) => (
+            Some(children),
+            format!("{{{}}}", children.len()),
+            None,
+            None,
         ),
-        JsonChangeKind::Removed(left) => {
-            (format!("{path}: removed {left}"), TextChangeKind::Delete)
+        JsonNodeKind::Array(children) => {
+            (Some(children), format!("[{}]", children.len()), None, None)
         }
-        JsonChangeKind::Added(right) => (format!("{path}: added {right}"), TextChangeKind::Insert),
+        JsonNodeKind::Unchanged(value) => (None, value.to_string(), None, None),
+        JsonNodeKind::Change(JsonChangeKind::Added(value)) => (
+            None,
+            value.to_string(),
+            Some(("added", "+")),
+            Some(INSERTED),
+        ),
+        JsonNodeKind::Change(JsonChangeKind::Removed(value)) => (
+            None,
+            value.to_string(),
+            Some(("removed", "\u{2212}")),
+            Some(DELETED),
+        ),
+        JsonNodeKind::Change(JsonChangeKind::Changed { left, right }) => (
+            None,
+            format!("{left} \u{2192} {right}"),
+            None,
+            Some(CHANGED),
+        ),
     };
-    let background = tint(kind).map(|(line, _)| line);
-    div()
-        .id(("json", ix))
+    let accessible_value =
+        change.map_or_else(|| value.clone(), |(word, _)| format!("{word} {value}"));
+    let name = match node.path.0.last() {
+        None => "$".to_owned(),
+        Some(PathSegment::Key(key)) => key.clone(),
+        Some(PathSegment::Index(index)) => format!("[{index}]"),
+    };
+    let expanded = children.map(|_| node.changed != toggled.contains(&node.path));
+    let gutter = match (expanded, change) {
+        (Some(true), _) => "\u{25be}",
+        (Some(false), _) => "\u{25b8}",
+        (None, Some((_, marker))) => marker,
+        (None, None) => "",
+    };
+    rows.push(TreeRow {
+        path: node.path.clone(),
+        indent,
+        gutter,
+        name,
+        value,
+        accessible_value,
+        background,
+        expanded,
+    });
+    if let (Some(children), Some(true)) = (children, expanded) {
+        for child in children {
+            push_tree_rows(child, indent + TREE_INDENT, toggled, rows);
+        }
+    }
+}
+
+/// The element id of the tree row for the node at `path` (a [`JsonPath`] or its text).
+fn tree_row_id(path: impl fmt::Display) -> ElementId {
+    SharedString::from(format!("json-{path}")).into()
+}
+
+/// One tree row; clicking a branch expands or collapses it.
+fn render_tree_row(row: &TreeRow, cx: &mut Context<DiffView>) -> AnyElement {
+    let theme = Theme::global(cx).tokens;
+    let path = &row.path;
+    let element = div()
+        .id(tree_row_id(path))
         .test_support()
-        .aria_label(text.clone())
+        .aria_label(format!("{path}: {}", row.accessible_value))
+        .flex()
+        .w_full()
         .h(px(ROW_HEIGHT))
-        .px_3()
+        .pl(px(row.indent))
         .whitespace_nowrap()
         .overflow_hidden()
-        .when_some(background, Styled::bg)
-        .child(text)
+        .when_some(row.background, Styled::bg)
+        .child(
+            div()
+                .flex_none()
+                .w(px(TREE_INDENT))
+                .text_color(theme.colors.muted_foreground)
+                .child(row.gutter),
+        )
+        .child(format!("{}: {}", row.name, row.value));
+    if row.expanded.is_none() {
+        return element.into_any_element();
+    }
+    let path = path.clone();
+    element
+        .cursor_pointer()
+        .hover(|style| style.bg(theme.colors.muted))
+        .on_click(cx.listener(move |this, _, _, cx| this.toggle_branch(&path, cx)))
         .into_any_element()
 }
 
 /// Translucent so they read on light and dark themes alike.
 const DELETED: Hsla = hsla(0., 0.7, 0.5, 0.25);
 const INSERTED: Hsla = hsla(130. / 360., 0.6, 0.45, 0.25);
+const CHANGED: Hsla = hsla(45. / 360., 0.9, 0.5, 0.25);
 const DELETED_STRONG: Hsla = hsla(0., 0.7, 0.5, 0.5);
 const INSERTED_STRONG: Hsla = hsla(130. / 360., 0.6, 0.45, 0.5);
 
@@ -555,8 +724,9 @@ mod tests {
         ("right", row).into()
     }
 
-    fn json(row: usize) -> ElementId {
-        ("json", row).into()
+    /// A JSON tree row, by the path of its node: `json("$.user.age")`.
+    fn json(path: &str) -> ElementId {
+        super::tree_row_id(path)
     }
 
     /// Writes `(name, contents)` files into a fresh directory.
@@ -607,7 +777,8 @@ mod tests {
         .unwrap()
     }
 
-    fn click(cx: &mut TestAppContext, window: AnyWindowHandle, id: &'static str) {
+    fn click(cx: &mut TestAppContext, window: AnyWindowHandle, id: impl Into<ElementId>) {
+        let id = id.into();
         cx.update_window(window, |_, window, cx| {
             window.render_frame(cx);
             window.click(id, cx);
@@ -747,32 +918,114 @@ mod tests {
         );
     }
 
-    #[gpui_kit::test]
-    fn json_files_are_detected_and_listed_by_path(cx: &mut TestAppContext) {
-        let dir = files(&[
-            ("a.json", r#"{"age": 30}"#),
-            ("b.json", r#"{"age": 31, "x": 1}"#),
-        ]);
+    /// Opens `a.json` and `b.json`; their extension makes `Auto` pick the JSON diff.
+    fn open_jsons(cx: &mut TestAppContext, left: &str, right: &str) -> (AnyWindowHandle, TempDir) {
+        let dir = files(&[("a.json", left), ("b.json", right)]);
         let window = open(
             cx,
             Some(&dir.path().join("a.json")),
             Some(&dir.path().join("b.json")),
         );
+        (window, dir)
+    }
 
+    const USER_LEFT: &str =
+        r#"{"user": {"age": 30, "name": "ann"}, "meta": {"v": 1}, "old": true}"#;
+    const USER_RIGHT: &str = r#"{"user": {"age": 31, "name": "ann"}, "meta": {"v": 1}, "x": 1}"#;
+
+    #[gpui_kit::test]
+    fn json_files_are_shown_as_a_tree_with_changes_expanded(cx: &mut TestAppContext) {
+        let (window, _dir) = open_jsons(cx, USER_LEFT, USER_RIGHT);
+
+        assert_eq!(label(cx, window, json("$")).as_deref(), Some("$: {4}"));
         assert_eq!(
-            label(cx, window, json(0)).as_deref(),
-            Some("$.age: 30 \u{2192} 31")
+            label(cx, window, json("$.user")).as_deref(),
+            Some("$.user: {2}")
         );
-        assert_eq!(label(cx, window, json(1)).as_deref(), Some("$.x: added 1"));
+        assert_eq!(
+            label(cx, window, json("$.user.age")).as_deref(),
+            Some("$.user.age: 30 \u{2192} 31")
+        );
+        assert_eq!(
+            label(cx, window, json("$.user.name")).as_deref(),
+            Some(r#"$.user.name: "ann""#)
+        );
+        assert_eq!(
+            label(cx, window, json("$.x")).as_deref(),
+            Some("$.x: added 1")
+        );
+        assert_eq!(
+            label(cx, window, json("$.old")).as_deref(),
+            Some("$.old: removed true")
+        );
+        // An unchanged subtree starts collapsed.
+        assert_eq!(
+            label(cx, window, json("$.meta")).as_deref(),
+            Some("$.meta: {1}")
+        );
+        assert_eq!(label(cx, window, json("$.meta.v")), None);
+    }
 
-        // Auto-detected JSON disables the granularity toggles too.
+    #[gpui_kit::test]
+    fn clicking_a_branch_expands_or_collapses_it(cx: &mut TestAppContext) {
+        let (window, _dir) = open_jsons(cx, USER_LEFT, USER_RIGHT);
+
+        click(cx, window, json("$.meta"));
+        assert_eq!(
+            label(cx, window, json("$.meta.v")).as_deref(),
+            Some("$.meta.v: 1")
+        );
+
+        click(cx, window, json("$.user"));
+        assert_eq!(label(cx, window, json("$.user.age")), None);
+        assert!(label(cx, window, json("$.meta.v")).is_some());
+
+        // Clicking a leaf does nothing.
+        click(cx, window, json("$.x"));
+        assert!(label(cx, window, json("$.x")).is_some());
+    }
+
+    #[gpui_kit::test]
+    fn json_can_be_viewed_as_side_by_side_text(cx: &mut TestAppContext) {
+        let (window, _dir) = open_jsons(cx, "{\n  \"a\": 1\n}\n", "{\n  \"a\": 2\n}\n");
+
+        // Granularity means nothing to the tree, so the mode toggles stop responding.
         click(cx, window, "mode-word");
-        click(cx, window, "kind-text");
+        click(cx, window, "view-text");
+        assert_eq!(label(cx, window, json("$")), None);
+        assert_eq!(
+            label(cx, window, left(1)).as_deref(),
+            Some("2 deleted:   \"a\": 1")
+        );
         cx.update_window(window, |_, window, cx| {
             window.render_frame(cx);
             assert_eq!(window.find("mode-line").checked(), Some(true));
         })
         .unwrap();
+
+        // In the text view they apply again.
+        click(cx, window, "mode-word");
+        cx.update_window(window, |_, window, cx| {
+            window.render_frame(cx);
+            assert_eq!(window.find("mode-word").checked(), Some(true));
+        })
+        .unwrap();
+
+        click(cx, window, "view-tree");
+        assert!(label(cx, window, json("$.a")).is_some());
+        assert_eq!(label(cx, window, left(1)), None);
+    }
+
+    #[gpui_kit::test]
+    fn invalid_json_shows_the_parse_error_instead_of_the_tree(cx: &mut TestAppContext) {
+        let (window, _dir) = open_jsons(cx, r#"{"a": }"#, r#"{"a": 1}"#);
+
+        let message = label(cx, window, "load-error".into()).unwrap();
+        assert!(
+            message.contains("left input is not valid JSON") && message.contains("line 1"),
+            "{message}"
+        );
+        assert_eq!(label(cx, window, json("$")), None);
     }
 
     #[gpui_kit::test]
@@ -790,16 +1043,16 @@ mod tests {
     #[gpui_kit::test]
     fn choosing_a_kind_reruns_the_diff(cx: &mut TestAppContext) {
         let (window, _dir) = open_texts(cx, r#"{"age": 30}"#, r#"{"age": 31}"#);
-        assert_eq!(label(cx, window, json(0)), None);
+        assert_eq!(label(cx, window, json("$.age")), None);
 
         click(cx, window, "kind-json");
         assert_eq!(
-            label(cx, window, json(0)).as_deref(),
+            label(cx, window, json("$.age")).as_deref(),
             Some("$.age: 30 \u{2192} 31")
         );
 
         click(cx, window, "kind-text");
-        assert_eq!(label(cx, window, json(0)), None);
+        assert_eq!(label(cx, window, json("$.age")), None);
         assert!(label(cx, window, left(0)).is_some());
     }
 

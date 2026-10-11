@@ -14,7 +14,9 @@ mod text;
 
 pub use diff::{DiffOptions, InputKind, diff};
 pub use error::{DiffError, Result};
-pub use json::{JsonChange, JsonChangeKind, JsonDiff, JsonPath, PathSegment};
+pub use json::{
+    JsonChange, JsonChangeKind, JsonDiff, JsonNode, JsonNodeKind, JsonPath, PathSegment,
+};
 pub use mode::DiffMode;
 pub use result::{DiffBody, DiffResult, DiffStats};
 pub use side::Side;
